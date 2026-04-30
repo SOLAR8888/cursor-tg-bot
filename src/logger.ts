@@ -17,7 +17,7 @@ const fileDestination = pino.destination({
   dest: LOG_FILE,
   sync: true,
   mkdir: true,
-  append: true,
+  append: false,
 });
 
 const stdoutTransport = pino.transport({

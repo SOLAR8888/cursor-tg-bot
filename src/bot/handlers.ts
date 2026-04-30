@@ -4,7 +4,7 @@ import type { AgentManager } from "../agents/manager.js";
 import { deriveAgentName } from "../agents/manager.js";
 import type { AppConfig, ProjectConfig } from "../types.js";
 import type { SessionStore } from "./session.js";
-import { logger } from "../logger.js";
+import { logger, logMessages } from "../logger.js";
 import { streamRun } from "../agents/streamer.js";
 import { chunkText } from "../util/chunk.js";
 import {
@@ -728,6 +728,10 @@ async function dispatchUserMessage(
       runId: run.id,
       isNewChat,
       hasImages: Boolean(images?.length),
+      promptLen: outgoingText.length,
+      ...(logMessages
+        ? { promptPreview: outgoingText.slice(0, 240) }
+        : {}),
     },
     "run started",
   );

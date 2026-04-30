@@ -89,6 +89,15 @@ async function recoverOneRun(
       ),
     ]);
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("Cannot wait on a detached running run")) {
+      logger.info(
+        { runId },
+        "recovery: detached run cannot be awaited; clearing session",
+      );
+      sessions.patch(userId, { activeRunId: undefined });
+      return;
+    }
     logger.warn({ err, runId }, "recovery: run.wait() failed");
     result = null;
   }

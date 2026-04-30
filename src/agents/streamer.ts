@@ -142,6 +142,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
   const startedAt = Date.now();
   let lastEventAt = startedAt;
   let eventCount = 0;
+  let cancelledByWatchdog = false;
   const heartbeat = setInterval(() => {
     const now = Date.now();
     logger.warn(
@@ -156,6 +157,35 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
       "stream heartbeat (no events recently)",
     );
   }, 30_000);
+  // Auto-cancel a stuck run: if the SDK has not delivered any new event for
+  // STALL_TIMEOUT_MS we assume the backend is hung and cancel the run so
+  // the user is not stuck waiting (e.g. ~10 min) for the server timeout.
+  const STALL_TIMEOUT_MS = 3 * 60 * 1000;
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastEventAt < STALL_TIMEOUT_MS) return;
+    if (cancelledByWatchdog) return;
+    cancelledByWatchdog = true;
+    logger.error(
+      {
+        projectId,
+        runId: run.id,
+        agentId: run.agentId,
+        userId,
+        sinceLastEventMs: Date.now() - lastEventAt,
+        eventCount,
+      },
+      "stream stalled — cancelling run",
+    );
+    void bot.api
+      .sendMessage(
+        chatId,
+        `⏱ Run завис — нет событий ${Math.floor(STALL_TIMEOUT_MS / 1000)}с. Отменяю и можно отправить запрос заново.`,
+      )
+      .catch(() => undefined);
+    void run.cancel().catch((err) => {
+      logger.warn({ err, runId: run.id }, "watchdog: run.cancel() failed");
+    });
+  }, 15_000);
 
   try {
     try {
@@ -323,6 +353,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
     }
   } finally {
     clearInterval(heartbeat);
+    clearInterval(watchdog);
     try {
       await outbox.stop();
     } catch (err) {
