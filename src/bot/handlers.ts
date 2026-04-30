@@ -10,11 +10,20 @@ import {
   CB,
   activeChatKeyboard,
   chatsKeyboard,
+  ideChatKeyboard,
   projectKeyboard,
   projectsKeyboard,
   rootKeyboard,
 } from "./keyboards.js";
 import { loadMcpServers, summarizeMcpEntry } from "../cursor/mcp-loader.js";
+import path from "node:path";
+import {
+  buildBootstrapPrompt,
+  getLastAssistantText as getLastIdeAssistantText,
+  ideTranscriptsDir,
+  listIdeChats,
+  readTranscript,
+} from "../cursor/ide-store.js";
 
 const HELP_TEXT =
   "Бот для управления Cursor-агентами в локальных проектах.\n\n" +
@@ -118,8 +127,9 @@ export function registerHandlers(
     sessions.patch(ctx.from.id, {
       selectedProjectId: project.id,
       activeAgentId: undefined,
+      activeChatKind: undefined,
       activeRunId: undefined,
-      awaitingTextFor: undefined,
+      awaitingText: undefined,
     });
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(formatProjectInfo(project), {
@@ -134,7 +144,7 @@ export function registerHandlers(
     await sendChatsList(ctx, manager, projectId, /*edit*/ true);
   });
 
-  bot.callbackQuery(/^chat:([^:]+):(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^csdk:([^:]+):(.+)$/, async (ctx) => {
     if (!ctx.from) return;
     const projectId = ctx.match[1];
     const agentId = ctx.match[2];
@@ -148,8 +158,9 @@ export function registerHandlers(
     sessions.patch(ctx.from.id, {
       selectedProjectId: projectId,
       activeAgentId: agentId,
+      activeChatKind: "sdk",
       activeRunId: undefined,
-      awaitingTextFor: undefined,
+      awaitingText: undefined,
     });
     try {
       await manager.resumeAgent(project, agentId);
@@ -159,7 +170,7 @@ export function registerHandlers(
       return;
     }
 
-    await ctx.reply(`📂 *${project.name}* · агент \`${agentId}\``, {
+    await ctx.reply(`💬 *${project.name}* · SDK-агент \`${agentId}\``, {
       parse_mode: "Markdown",
     });
 
@@ -188,6 +199,50 @@ export function registerHandlers(
         },
       );
     }
+  });
+
+  bot.callbackQuery(/^cide:([^:]+):(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
+    const projectId = ctx.match[1];
+    const ideChatId = ctx.match[2];
+    if (!projectId || !ideChatId) return;
+    const project = manager.getProject(projectId);
+    if (!project) {
+      await ctx.answerCallbackQuery({ text: "Проект не найден", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    sessions.patch(ctx.from.id, {
+      selectedProjectId: projectId,
+      activeAgentId: ideChatId,
+      activeChatKind: "ide",
+      activeRunId: undefined,
+      awaitingText: undefined,
+    });
+
+    await openIdeChat(ctx, project, ideChatId);
+  });
+
+  bot.callbackQuery(/^cont_ide:([^:]+):(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
+    const projectId = ctx.match[1];
+    const ideChatId = ctx.match[2];
+    if (!projectId || !ideChatId) return;
+    await ctx.answerCallbackQuery();
+    sessions.patch(ctx.from.id, {
+      selectedProjectId: projectId,
+      activeAgentId: undefined,
+      activeChatKind: undefined,
+      activeRunId: undefined,
+      awaitingText: { kind: "continue_ide", ideChatId },
+    });
+    await ctx.reply(
+      "🔄 *Перенос IDE-чата в SDK*\n\n" +
+        "Отправьте следующее сообщение — будет создан **новый** SDK-агент с историей этого IDE-чата как контекстом, " +
+        "и ваше сообщение уйдёт в него первым.\n\n" +
+        "_Это новый агент с другим id; в IDE-чате синхронизации не будет._",
+      { parse_mode: "Markdown" },
+    );
   });
 
   bot.callbackQuery(/^new_chat:(.+)$/, async (ctx) => {
@@ -236,11 +291,21 @@ export function registerHandlers(
       return;
     }
 
+    if (session.activeChatKind === "ide" && session.awaitingText?.kind !== "continue_ide") {
+      await ctx.reply(
+        "👀 Это IDE-чат — он read-only. Нажмите *🔄 Продолжить в боте*, чтобы создать SDK-копию.",
+        { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
     let agentId = session.activeAgentId;
     let isNewChat = false;
-    const explicitNewChat = session.awaitingTextFor === "new_chat";
+    const awaiting = session.awaitingText;
+    const isContinueIde = awaiting?.kind === "continue_ide";
+    const explicitNewChat = awaiting?.kind === "new_chat";
 
-    if (!agentId && !explicitNewChat) {
+    if (!agentId && !explicitNewChat && !isContinueIde) {
       await ctx.reply(
         `Откройте чат в проекте *${project.name}*: /chats — или нажмите «➕ Новый чат», чтобы начать новый.`,
         { parse_mode: "Markdown" },
@@ -248,14 +313,37 @@ export function registerHandlers(
       return;
     }
 
-    if (explicitNewChat || !agentId) {
+    let outgoingText = text;
+    if (isContinueIde && awaiting?.kind === "continue_ide") {
+      const ideChatId = awaiting.ideChatId;
+      const transcriptPath = path.join(
+        ideTranscriptsDir(project.cwd),
+        ideChatId,
+        `${ideChatId}.jsonl`,
+      );
+      let transcript;
+      try {
+        transcript = await readTranscript(transcriptPath, { tail: 60 });
+      } catch (err) {
+        logger.error({ err, ideChatId }, "readTranscript failed");
+        await ctx.reply("Не удалось прочитать историю IDE-чата: " + (err as Error).message);
+        return;
+      }
+      outgoingText = buildBootstrapPrompt(transcript, text);
+      await ctx.reply(
+        `🔄 Создаю SDK-агента с историей IDE-чата (${transcript.length} сообщ.)…`,
+      );
+    }
+
+    if (explicitNewChat || isContinueIde || !agentId) {
       const name = deriveAgentName(text);
       try {
         const created = await manager.createAgent(project, name);
         agentId = created.agentId;
         sessions.patch(ctx.from.id, {
           activeAgentId: agentId,
-          awaitingTextFor: undefined,
+          activeChatKind: "sdk",
+          awaitingText: undefined,
         });
         isNewChat = true;
         await ctx.reply(`🆕 Новый чат: *${name}*\n\`${agentId}\``, {
@@ -286,7 +374,7 @@ export function registerHandlers(
 
     let run;
     try {
-      run = await manager.sendMessage(agent, text);
+      run = await manager.sendMessage(agent, outgoingText);
     } catch (err) {
       logger.error({ err }, "agent.send failed");
       await ctx.reply("Не удалось отправить сообщение агенту: " + manager.describeError(err));
@@ -332,23 +420,75 @@ async function sendChatsList(
     else await ctx.reply("Проект не найден.");
     return;
   }
-  let agents;
-  try {
-    agents = await manager.listAgentsWithNames(project);
-  } catch (err) {
-    logger.error({ err, projectId }, "list agents failed");
-    const msg = "Не удалось получить список чатов: " + manager.describeError(err);
-    if (edit) await ctx.editMessageText(msg);
-    else await ctx.reply(msg);
-    return;
+  const [sdkResult, ideResult] = await Promise.allSettled([
+    manager.listAgentsWithNames(project),
+    listIdeChats(project.cwd),
+  ]);
+
+  if (sdkResult.status === "rejected") {
+    logger.error({ err: sdkResult.reason, projectId }, "list sdk agents failed");
   }
-  const header = `💬 Чаты в *${project.name}* (${agents.length})`;
+  if (ideResult.status === "rejected") {
+    logger.error({ err: ideResult.reason, projectId }, "list ide chats failed");
+  }
+
+  const sdkAgents = sdkResult.status === "fulfilled" ? sdkResult.value : [];
+  const ideChats = ideResult.status === "fulfilled" ? ideResult.value : [];
+  const total = sdkAgents.length + ideChats.length;
+
+  const header =
+    `💬 Чаты в *${project.name}* (${total})\n` +
+    `_💬 SDK: ${sdkAgents.length} · 👀 IDE: ${ideChats.length}_`;
   const opts = {
     parse_mode: "Markdown" as const,
-    reply_markup: chatsKeyboard(projectId, agents),
+    reply_markup: chatsKeyboard(projectId, sdkAgents, ideChats),
   };
   if (edit) await ctx.editMessageText(header, opts);
   else await ctx.reply(header, opts);
+}
+
+async function openIdeChat(
+  ctx: Context,
+  project: ProjectConfig,
+  ideChatId: string,
+): Promise<void> {
+  const transcriptPath = path.join(
+    ideTranscriptsDir(project.cwd),
+    ideChatId,
+    `${ideChatId}.jsonl`,
+  );
+  let transcript;
+  try {
+    transcript = await readTranscript(transcriptPath);
+  } catch (err) {
+    logger.error({ err, ideChatId }, "openIdeChat read failed");
+    await ctx.reply("Не удалось прочитать IDE-чат: " + (err as Error).message);
+    return;
+  }
+  const lastText = getLastIdeAssistantText(transcript);
+  const userMessageCount = transcript.filter((e) => e.role === "user").length;
+  const assistantMessageCount = transcript.filter((e) => e.role === "assistant").length;
+
+  await ctx.reply(
+    `👀 *${project.name}* · IDE-чат \`${ideChatId}\`\n` +
+      `_${userMessageCount} user · ${assistantMessageCount} assistant сообщ. Read-only._`,
+    { parse_mode: "Markdown" },
+  );
+
+  if (lastText) {
+    const parts = chunkText(lastText);
+    const lastIdx = parts.length - 1;
+    for (let i = 0; i < parts.length; i++) {
+      const isLast = i === lastIdx;
+      await ctx.reply(parts[i] ?? "", {
+        ...(isLast ? { reply_markup: ideChatKeyboard(project.id, ideChatId) } : {}),
+      });
+    }
+  } else {
+    await ctx.reply("В этом IDE-чате нет ответов ассистента.", {
+      reply_markup: ideChatKeyboard(project.id, ideChatId),
+    });
+  }
 }
 
 async function startNewChatPrompt(
@@ -359,8 +499,9 @@ async function startNewChatPrompt(
   if (!ctx.from) return;
   sessions.patch(ctx.from.id, {
     selectedProjectId: projectId,
-    awaitingTextFor: "new_chat",
+    awaitingText: { kind: "new_chat" },
     activeAgentId: undefined,
+    activeChatKind: undefined,
     activeRunId: undefined,
   });
   await ctx.reply(
@@ -402,12 +543,13 @@ async function handleStatus(
   const project = session.selectedProjectId
     ? manager.getProject(session.selectedProjectId)
     : undefined;
+  const kind = session.activeChatKind === "ide" ? "👀 IDE" : "💬 SDK";
   const lines = [
     `Модель: \`${config.defaultModel.id}\``,
     `Проект: ${project ? `*${project.name}*` : "не выбран"}`,
-    `Агент: ${session.activeAgentId ? `\`${session.activeAgentId}\`` : "нет"}`,
+    `Активный чат: ${session.activeAgentId ? `${kind} \`${session.activeAgentId}\`` : "нет"}`,
   ];
-  if (session.activeAgentId) {
+  if (session.activeAgentId && session.activeChatKind === "sdk") {
     const run = manager.getActiveRun(session.activeAgentId);
     lines.push(`Run: ${run ? run.status : "неактивен"}`);
   }

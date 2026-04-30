@@ -17,10 +17,15 @@ export interface AppConfig {
   streamEditDebounceMs: number;
 }
 
+export type AwaitingText =
+  | { kind: "new_chat" }
+  | { kind: "continue_ide"; ideChatId: string };
+
 export interface UserSession {
   userId: number;
   selectedProjectId?: string;
   activeAgentId?: string;
+  activeChatKind?: "sdk" | "ide";
   activeRunId?: string;
-  awaitingTextFor?: "new_chat" | undefined;
+  awaitingText?: AwaitingText;
 }
