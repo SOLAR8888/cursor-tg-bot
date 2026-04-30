@@ -1,0 +1,17 @@
+{
+  "$schema": "./projects.schema.json",
+  "projects": [
+    {
+      "id": "cursor-tg-bot",
+      "name": "Cursor TG Bot",
+      "cwd": "C:\\Users\\SOLAR\\work\\SOLAR\\cursor-tg-bot",
+      "description": "This bot itself"
+    },
+    {
+      "id": "example-app",
+      "name": "Example App",
+      "cwd": "C:\\Users\\SOLAR\\work\\example-app",
+      "description": "Sample project — replace with your real ones"
+    }
+  ]
+}

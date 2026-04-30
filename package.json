@@ -1,0 +1,36 @@
+{
+  "name": "cursor-tg-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Telegram bot for managing Cursor IDE agents across multiple local projects",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "serve": "npm run build && node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@cursor/sdk": "latest",
+    "better-sqlite3": "latest",
+    "dotenv": "latest",
+    "grammy": "latest",
+    "p-retry": "latest",
+    "pino": "latest",
+    "pino-pretty": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "rimraf": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
