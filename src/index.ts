@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { createBot } from "./bot/bot.js";
 import { AgentManager } from "./agents/manager.js";
 import { SessionStore } from "./bot/session.js";
+import { recoverActiveRuns } from "./agents/recovery.js";
 
 const RUNTIME_ERROR_RETRY_MS = 2000;
 
@@ -62,6 +63,7 @@ async function main(): Promise<void> {
         drop_pending_updates: true,
         onStart: (info) => {
           logger.info({ username: info.username }, "telegram bot started");
+          void recoverActiveRuns(bot, agentManager, sessions);
         },
       });
       return;

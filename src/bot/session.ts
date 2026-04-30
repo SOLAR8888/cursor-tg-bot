@@ -84,4 +84,8 @@ export class SessionStore {
     this.map.set(userId, { userId });
     this.scheduleSave();
   }
+
+  entries(): IterableIterator<[number, UserSession]> {
+    return this.map.entries();
+  }
 }
