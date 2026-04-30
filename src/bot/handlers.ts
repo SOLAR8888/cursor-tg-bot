@@ -1,4 +1,5 @@
 import type { Bot, CallbackQueryContext, CommandContext, Context } from "grammy";
+import type { SDKImage } from "@cursor/sdk";
 import type { AgentManager } from "../agents/manager.js";
 import { deriveAgentName } from "../agents/manager.js";
 import type { AppConfig, ProjectConfig } from "../types.js";
@@ -25,6 +26,23 @@ import {
   listIdeChats,
   readTranscript,
 } from "../cursor/ide-store.js";
+import {
+  MAX_TEXT_INLINE_SIZE,
+  TelegramFileTooBigError,
+  downloadTelegramFile,
+  formatBinaryFileForPrompt,
+  formatTextFileForPrompt,
+  isImageMime,
+  isTextLikeFile,
+  mimeFromName,
+  saveToInbox,
+} from "./inbox.js";
+
+interface IncomingMessage {
+  text: string;
+  images?: SDKImage[];
+}
+import { buildOutboxInstruction, outboxDirForProject } from "./outbox.js";
 
 const HELP_TEXT =
   "Бот для управления Cursor-агентами в локальных проектах.\n\n" +
@@ -361,139 +379,370 @@ export function registerHandlers(
 
   bot.callbackQuery(CB.CANCEL_RUN, (ctx) => handleCancel(ctx, manager, sessions));
 
-  // ---------- TEXT MESSAGES ----------
+  // ---------- USER MESSAGES (text / photo / document) ----------
   bot.on("message:text", async (ctx) => {
     if (!ctx.from) return;
     const text = ctx.message.text;
     if (text.startsWith("/")) return;
+    await dispatchUserMessage(ctx, bot, config, manager, sessions, { text });
+  });
 
-    const session = sessions.get(ctx.from.id);
-    let projectId = session.selectedProjectId;
-    if (!projectId) {
-      if (config.projects.length === 1 && config.projects[0]) {
-        projectId = config.projects[0].id;
-        sessions.patch(ctx.from.id, { selectedProjectId: projectId });
-      } else {
-        await ctx.reply("Сначала выберите проект: /projects");
-        return;
-      }
-    }
-    const project = manager.getProject(projectId);
-    if (!project) {
-      await ctx.reply("Проект не найден. /start");
-      return;
-    }
-
-    if (session.activeChatKind === "ide" && session.awaitingText?.kind !== "continue_ide") {
-      await ctx.reply(
-        "👀 Это IDE-чат — он read-only. Нажмите *🔄 Продолжить в боте*, чтобы создать SDK-копию.",
-        { parse_mode: "Markdown" },
-      );
-      return;
-    }
-
-    let agentId = session.activeAgentId;
-    let isNewChat = false;
-    const awaiting = session.awaitingText;
-    const isContinueIde = awaiting?.kind === "continue_ide";
-    const explicitNewChat = awaiting?.kind === "new_chat";
-
-    if (!agentId && !explicitNewChat && !isContinueIde) {
-      await ctx.reply(
-        `Откройте чат в проекте *${project.name}*: /chats — или нажмите «➕ Новый чат», чтобы начать новый.`,
-        { parse_mode: "Markdown" },
-      );
-      return;
-    }
-
-    let outgoingText = text;
-    if (isContinueIde && awaiting?.kind === "continue_ide") {
-      const ideChatId = awaiting.ideChatId;
-      const transcriptPath = path.join(
-        ideTranscriptsDir(project.cwd),
-        ideChatId,
-        `${ideChatId}.jsonl`,
-      );
-      let transcript;
-      try {
-        transcript = await readTranscript(transcriptPath, { tail: 60 });
-      } catch (err) {
-        logger.error({ err, ideChatId }, "readTranscript failed");
-        await ctx.reply("Не удалось прочитать историю IDE-чата: " + (err as Error).message);
-        return;
-      }
-      outgoingText = buildBootstrapPrompt(transcript, text);
-      await ctx.reply(
-        `🔄 Создаю SDK-агента с историей IDE-чата (${transcript.length} сообщ.)…`,
-      );
-    }
-
-    if (explicitNewChat || isContinueIde || !agentId) {
-      const name = deriveAgentName(text);
-      try {
-        const created = await manager.createAgent(project, name);
-        agentId = created.agentId;
-        sessions.patch(ctx.from.id, {
-          activeAgentId: agentId,
-          activeChatKind: "sdk",
-          awaitingText: undefined,
-        });
-        isNewChat = true;
-        await ctx.reply(`🆕 Новый чат: *${name}*\n\`${agentId}\``, {
-          parse_mode: "Markdown",
-        });
-      } catch (err) {
-        logger.error({ err }, "createAgent failed");
-        await ctx.reply("Не удалось создать агента: " + manager.describeError(err));
-        return;
-      }
-    }
-
-    if (manager.isAgentBusy(agentId)) {
-      await ctx.reply("⏳ Идёт активный run. Подождите завершения или /cancel.");
-      return;
-    }
-
-    let agent = manager.getCachedAgent(agentId);
-    if (!agent) {
-      try {
-        agent = await manager.resumeAgent(project, agentId);
-      } catch (err) {
-        logger.error({ err, agentId }, "resume on send failed");
-        await ctx.reply("Не удалось подключиться к агенту: " + manager.describeError(err));
-        return;
-      }
-    }
-
-    let run;
+  bot.on("message:photo", async (ctx) => {
+    if (!ctx.from) return;
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    const photos = ctx.message.photo;
+    const largest = photos[photos.length - 1];
+    if (!largest) return;
+    let downloaded;
     try {
-      run = await manager.sendMessage(agent, outgoingText);
+      downloaded = await downloadTelegramFile(bot, largest.file_id);
     } catch (err) {
-      logger.error({ err }, "agent.send failed");
-      await ctx.reply("Не удалось отправить сообщение агенту: " + manager.describeError(err));
+      if (err instanceof TelegramFileTooBigError) {
+        await ctx.reply("📎 " + err.message);
+        return;
+      }
+      logger.error({ err }, "photo download failed");
+      await ctx.reply("Не удалось скачать фото: " + (err as Error).message);
       return;
     }
-
-    manager.setActiveRun(agentId, run);
-    sessions.patch(ctx.from.id, { activeRunId: run.id });
-    logger.info(
-      { userId: ctx.from.id, projectId, agentId, runId: run.id, isNewChat },
-      "run started",
-    );
-
-    void streamRun({
-      bot,
-      chatId: ctx.chat.id,
-      run,
-      projectId,
-      showThinking: config.showThinking,
-      debounceMs: config.streamEditDebounceMs,
-    }).finally(() => {
-      manager.setActiveRun(agentId!, undefined);
-      sessions.patch(ctx.from!.id, { activeRunId: undefined });
+    const caption = ctx.message.caption?.trim() ?? "";
+    const text = caption.length > 0 ? caption : "Что на этом изображении?";
+    await dispatchUserMessage(ctx, bot, config, manager, sessions, {
+      text,
+      images: [{ data: downloaded.buf.toString("base64"), mimeType: "image/jpeg" }],
     });
   });
 
+  bot.on("message:document", async (ctx) => {
+    if (!ctx.from) return;
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    const doc = ctx.message.document;
+    if (!doc) return;
+    const fileName = doc.file_name ?? `file-${doc.file_id.slice(0, 8)}`;
+    const mime = doc.mime_type ?? mimeFromName(fileName);
+    let downloaded;
+    try {
+      downloaded = await downloadTelegramFile(bot, doc.file_id);
+    } catch (err) {
+      if (err instanceof TelegramFileTooBigError) {
+        await ctx.reply("📎 " + err.message);
+        return;
+      }
+      logger.error({ err, fileName }, "document download failed");
+      await ctx.reply("Не удалось скачать файл: " + (err as Error).message);
+      return;
+    }
+
+    const caption = ctx.message.caption?.trim() ?? "";
+
+    // Image-document: send as image to the agent.
+    if (isImageMime(mime)) {
+      const text = caption.length > 0 ? caption : "Что на этом изображении?";
+      await dispatchUserMessage(ctx, bot, config, manager, sessions, {
+        text,
+        images: [
+          { data: downloaded.buf.toString("base64"), mimeType: mime ?? "image/png" },
+        ],
+      });
+      return;
+    }
+
+    const projectId = sessions.get(ctx.from.id).selectedProjectId
+      ?? (config.projects.length === 1 ? config.projects[0]?.id : undefined);
+
+    // Text-like and small enough — embed in prompt.
+    if (
+      isTextLikeFile(mime, fileName) &&
+      downloaded.size <= MAX_TEXT_INLINE_SIZE
+    ) {
+      let content: string;
+      try {
+        content = downloaded.buf.toString("utf8");
+      } catch (err) {
+        logger.warn({ err, fileName }, "document utf8 decode failed; treating as binary");
+        content = "";
+      }
+      if (content.length > 0) {
+        await dispatchUserMessage(ctx, bot, config, manager, sessions, {
+          text: formatTextFileForPrompt(fileName, caption, content),
+        });
+        return;
+      }
+    }
+
+    // Fallback: save to inbox, give agent the absolute path.
+    if (!projectId) {
+      await ctx.reply("Сначала выберите проект: /projects");
+      return;
+    }
+    let savedPath;
+    try {
+      savedPath = await saveToInbox(projectId, fileName, downloaded.buf);
+    } catch (err) {
+      logger.error({ err, fileName }, "saveToInbox failed");
+      await ctx.reply("Не удалось сохранить файл: " + (err as Error).message);
+      return;
+    }
+    await dispatchUserMessage(ctx, bot, config, manager, sessions, {
+      text: formatBinaryFileForPrompt(fileName, savedPath, caption, downloaded.size),
+    });
+  });
+
+  bot.on("message:audio", async (ctx) => {
+    const a = ctx.message.audio;
+    if (!a) return;
+    const fromMeta = [a.performer, a.title].filter(Boolean).join(" - ").trim();
+    const name =
+      a.file_name ??
+      (fromMeta.length > 0 ? `${fromMeta}.mp3` : `audio-${a.file_id.slice(0, 8)}.mp3`);
+    await dispatchAttachedMedia(ctx, bot, config, manager, sessions, {
+      fileId: a.file_id,
+      fileName: name,
+      mimeType: a.mime_type,
+      defaultPrompt:
+        "Прикреплён аудиофайл. Опиши, что в нём, если можешь — иначе попроси транскрипцию.",
+    });
+  });
+
+  bot.on("message:voice", async (ctx) => {
+    const v = ctx.message.voice;
+    if (!v) return;
+    await dispatchAttachedMedia(ctx, bot, config, manager, sessions, {
+      fileId: v.file_id,
+      fileName: `voice-${v.file_id.slice(0, 8)}.ogg`,
+      mimeType: v.mime_type ?? "audio/ogg",
+      defaultPrompt:
+        "Прикреплено голосовое сообщение. Если есть инструмент транскрипции — расшифруй, иначе попроси пользователя прислать текст.",
+    });
+  });
+
+  bot.on("message:video", async (ctx) => {
+    const v = ctx.message.video;
+    if (!v) return;
+    await dispatchAttachedMedia(ctx, bot, config, manager, sessions, {
+      fileId: v.file_id,
+      fileName: v.file_name ?? `video-${v.file_id.slice(0, 8)}.mp4`,
+      mimeType: v.mime_type ?? "video/mp4",
+      defaultPrompt:
+        "Прикреплено видео. Опиши, что в нём, если есть инструмент для анализа видео.",
+    });
+  });
+
+  bot.on("message:video_note", async (ctx) => {
+    const v = ctx.message.video_note;
+    if (!v) return;
+    await dispatchAttachedMedia(ctx, bot, config, manager, sessions, {
+      fileId: v.file_id,
+      fileName: `video-note-${v.file_id.slice(0, 8)}.mp4`,
+      mimeType: "video/mp4",
+      defaultPrompt:
+        "Прикреплён видео-кружок. Опиши, что в нём, если есть инструмент для анализа видео.",
+    });
+  });
+}
+
+interface AttachedMediaOptions {
+  fileId: string;
+  fileName: string;
+  mimeType: string | undefined;
+  defaultPrompt: string;
+}
+
+async function dispatchAttachedMedia(
+  ctx: Context,
+  bot: Bot<Context>,
+  config: AppConfig,
+  manager: AgentManager,
+  sessions: SessionStore,
+  opts: AttachedMediaOptions,
+): Promise<void> {
+  if (!ctx.from) return;
+  await ctx.replyWithChatAction("typing").catch(() => undefined);
+  let downloaded;
+  try {
+    downloaded = await downloadTelegramFile(bot, opts.fileId);
+  } catch (err) {
+    if (err instanceof TelegramFileTooBigError) {
+      await ctx.reply("📎 " + err.message);
+      return;
+    }
+    logger.error({ err, fileName: opts.fileName }, "media download failed");
+    await ctx.reply("Не удалось скачать файл: " + (err as Error).message);
+    return;
+  }
+  const projectId =
+    sessions.get(ctx.from.id).selectedProjectId ??
+    (config.projects.length === 1 ? config.projects[0]?.id : undefined);
+  if (!projectId) {
+    await ctx.reply("Сначала выберите проект: /projects");
+    return;
+  }
+  let savedPath;
+  try {
+    savedPath = await saveToInbox(projectId, opts.fileName, downloaded.buf);
+  } catch (err) {
+    logger.error({ err, fileName: opts.fileName }, "saveToInbox failed");
+    await ctx.reply("Не удалось сохранить файл: " + (err as Error).message);
+    return;
+  }
+  const caption = ctx.message?.caption?.trim() ?? "";
+  const prompt = caption.length > 0 ? caption : opts.defaultPrompt;
+  await dispatchUserMessage(ctx, bot, config, manager, sessions, {
+    text: formatBinaryFileForPrompt(opts.fileName, savedPath, prompt, downloaded.size),
+  });
+}
+
+async function dispatchUserMessage(
+  ctx: Context,
+  bot: Bot<Context>,
+  config: AppConfig,
+  manager: AgentManager,
+  sessions: SessionStore,
+  incoming: IncomingMessage,
+): Promise<void> {
+  if (!ctx.from || !ctx.chat) return;
+  const text = incoming.text;
+  const images = incoming.images;
+
+  const session = sessions.get(ctx.from.id);
+  let projectId = session.selectedProjectId;
+  if (!projectId) {
+    if (config.projects.length === 1 && config.projects[0]) {
+      projectId = config.projects[0].id;
+      sessions.patch(ctx.from.id, { selectedProjectId: projectId });
+    } else {
+      await ctx.reply("Сначала выберите проект: /projects");
+      return;
+    }
+  }
+  const project = manager.getProject(projectId);
+  if (!project) {
+    await ctx.reply("Проект не найден. /start");
+    return;
+  }
+
+  if (session.activeChatKind === "ide" && session.awaitingText?.kind !== "continue_ide") {
+    await ctx.reply(
+      "👀 Это IDE-чат — он read-only. Нажмите *🔄 Продолжить в боте*, чтобы создать SDK-копию.",
+      { parse_mode: "Markdown" },
+    );
+    return;
+  }
+
+  let agentId = session.activeAgentId;
+  let isNewChat = false;
+  const awaiting = session.awaitingText;
+  const isContinueIde = awaiting?.kind === "continue_ide";
+  const explicitNewChat = awaiting?.kind === "new_chat";
+
+  if (!agentId && !explicitNewChat && !isContinueIde) {
+    await ctx.reply(
+      `Откройте чат в проекте *${project.name}*: /chats — или нажмите «➕ Новый чат», чтобы начать новый.`,
+      { parse_mode: "Markdown" },
+    );
+    return;
+  }
+
+  let outgoingText = text;
+  if (isContinueIde && awaiting?.kind === "continue_ide") {
+    const ideChatId = awaiting.ideChatId;
+    const transcriptPath = path.join(
+      ideTranscriptsDir(project.cwd),
+      ideChatId,
+      `${ideChatId}.jsonl`,
+    );
+    let transcript;
+    try {
+      transcript = await readTranscript(transcriptPath, { tail: 60 });
+    } catch (err) {
+      logger.error({ err, ideChatId }, "readTranscript failed");
+      await ctx.reply("Не удалось прочитать историю IDE-чата: " + (err as Error).message);
+      return;
+    }
+    outgoingText = buildBootstrapPrompt(transcript, text);
+    await ctx.reply(
+      `🔄 Создаю SDK-агента с историей IDE-чата (${transcript.length} сообщ.)…`,
+    );
+  }
+
+  if (explicitNewChat || isContinueIde || !agentId) {
+    const name = deriveAgentName(text);
+    try {
+      const created = await manager.createAgent(project, name);
+      agentId = created.agentId;
+      sessions.patch(ctx.from.id, {
+        activeAgentId: agentId,
+        activeChatKind: "sdk",
+        awaitingText: undefined,
+      });
+      isNewChat = true;
+      await ctx.reply(`🆕 Новый чат: *${name}*\n\`${agentId}\``, {
+        parse_mode: "Markdown",
+      });
+    } catch (err) {
+      logger.error({ err }, "createAgent failed");
+      await ctx.reply("Не удалось создать агента: " + manager.describeError(err));
+      return;
+    }
+  }
+
+  if (isNewChat) {
+    const outboxDir = outboxDirForProject(project.id);
+    outgoingText = `${buildOutboxInstruction(outboxDir)}\n\n${outgoingText}`;
+  }
+
+  if (manager.isAgentBusy(agentId)) {
+    await ctx.reply("⏳ Идёт активный run. Подождите завершения или /cancel.");
+    return;
+  }
+
+  let agent = manager.getCachedAgent(agentId);
+  if (!agent) {
+    try {
+      agent = await manager.resumeAgent(project, agentId);
+    } catch (err) {
+      logger.error({ err, agentId }, "resume on send failed");
+      await ctx.reply("Не удалось подключиться к агенту: " + manager.describeError(err));
+      return;
+    }
+  }
+
+  const sdkMessage =
+    images && images.length > 0 ? { text: outgoingText, images } : outgoingText;
+  let run;
+  try {
+    run = await manager.sendMessage(agent, sdkMessage);
+  } catch (err) {
+    logger.error({ err }, "agent.send failed");
+    await ctx.reply("Не удалось отправить сообщение агенту: " + manager.describeError(err));
+    return;
+  }
+
+  manager.setActiveRun(agentId, run);
+  sessions.patch(ctx.from.id, { activeRunId: run.id });
+  logger.info(
+    {
+      userId: ctx.from.id,
+      projectId,
+      agentId,
+      runId: run.id,
+      isNewChat,
+      hasImages: Boolean(images?.length),
+    },
+    "run started",
+  );
+
+  void streamRun({
+    bot,
+    chatId: ctx.chat.id,
+    run,
+    projectId,
+    showThinking: config.showThinking,
+    debounceMs: config.streamEditDebounceMs,
+  }).finally(() => {
+    manager.setActiveRun(agentId!, undefined);
+    sessions.patch(ctx.from!.id, { activeRunId: undefined });
+  });
 }
 
 function formatProjectInfo(project: ProjectConfig): string {

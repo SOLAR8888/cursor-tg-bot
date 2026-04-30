@@ -17,6 +17,8 @@ import { createBot } from "./bot/bot.js";
 import { AgentManager } from "./agents/manager.js";
 import { SessionStore } from "./bot/session.js";
 import { recoverActiveRuns } from "./agents/recovery.js";
+import { cleanOutboxRoot, cleanStaleDataDir } from "./bot/outbox.js";
+import { cleanInboxRoot } from "./bot/inbox.js";
 
 const RUNTIME_ERROR_RETRY_MS = 2000;
 
@@ -76,6 +78,10 @@ async function main(): Promise<void> {
     },
     "starting cursor-tg-bot",
   );
+
+  await cleanStaleDataDir();
+  await cleanOutboxRoot();
+  await cleanInboxRoot();
 
   const agentManager = new AgentManager(config);
   const sessions = new SessionStore();

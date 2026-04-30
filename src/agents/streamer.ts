@@ -3,6 +3,7 @@ import type { Run, SDKMessage } from "@cursor/sdk";
 import { logger, logMessages } from "../logger.js";
 import { TG_MAX_TEXT, chunkText } from "../util/chunk.js";
 import { afterRunKeyboard } from "../bot/keyboards.js";
+import { startOutboxWatcher } from "../bot/outbox.js";
 import {
   describeToolCallCompleted,
   describeToolCallStart,
@@ -27,6 +28,8 @@ interface AssistantBuffer {
 
 export async function streamRun(opts: StreamRunOptions): Promise<void> {
   const { bot, chatId, run, projectId, showThinking, debounceMs } = opts;
+
+  const outbox = startOutboxWatcher({ bot, chatId, projectId });
 
   let assistant: AssistantBuffer | undefined;
   const toolMessageIds = new Map<string, number>();
@@ -135,103 +138,111 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
   };
 
   try {
-    for await (const event of run.stream()) {
-      if (logMessages) {
-        logger.debug({ event }, "stream event");
-      }
-      switch (event.type) {
-        case "system": {
-          const tools = event.tools && event.tools.length > 0
-            ? ` · ${event.tools.length} tools`
-            : "";
-          await bot.api.sendMessage(
-            chatId,
-            `🟡 запуск… ${event.model?.id ?? ""}${tools}`.trim(),
-          );
-          break;
+    try {
+      for await (const event of run.stream()) {
+        if (logMessages) {
+          logger.debug({ event }, "stream event");
         }
-        case "user":
-          break;
-        case "assistant":
-          for (const block of event.message.content) {
-            if (block.type === "text") {
-              await handleAssistantText(block.text);
-            }
-          }
-          break;
-        case "thinking":
-          if (showThinking && event.text) {
+        switch (event.type) {
+          case "system": {
+            const tools = event.tools && event.tools.length > 0
+              ? ` · ${event.tools.length} tools`
+              : "";
             await bot.api.sendMessage(
               chatId,
-              "🧠 " + (event.text.length > 500 ? event.text.slice(0, 500) + "…" : event.text),
+              `🟡 запуск… ${event.model?.id ?? ""}${tools}`.trim(),
             );
+            break;
           }
-          break;
-        case "tool_call":
-          await handleToolCall(event);
-          break;
-        case "status": {
-          const text = `${statusEmoji(event.status)} ${event.status}` +
-            (event.message ? ` — ${event.message}` : "");
-          await bot.api.sendMessage(chatId, text);
-          break;
+          case "user":
+            break;
+          case "assistant":
+            for (const block of event.message.content) {
+              if (block.type === "text") {
+                await handleAssistantText(block.text);
+              }
+            }
+            break;
+          case "thinking":
+            if (showThinking && event.text) {
+              await bot.api.sendMessage(
+                chatId,
+                "🧠 " + (event.text.length > 500 ? event.text.slice(0, 500) + "…" : event.text),
+              );
+            }
+            break;
+          case "tool_call":
+            await handleToolCall(event);
+            break;
+          case "status": {
+            const text = `${statusEmoji(event.status)} ${event.status}` +
+              (event.message ? ` — ${event.message}` : "");
+            await bot.api.sendMessage(chatId, text);
+            break;
+          }
+          case "task":
+            if (event.text) {
+              await bot.api.sendMessage(chatId, "📋 " + event.text);
+            }
+            break;
+          case "request":
+            await bot.api.sendMessage(
+              chatId,
+              "⏸ Агент запросил подтверждение в IDE\\.",
+              { parse_mode: "MarkdownV2" },
+            );
+            break;
         }
-        case "task":
-          if (event.text) {
-            await bot.api.sendMessage(chatId, "📋 " + event.text);
-          }
+      }
+      await finishAssistantBuffer();
+    } catch (err) {
+      await finishAssistantBuffer();
+      logger.error({ err }, "stream error");
+      const message = err instanceof Error ? err.message : String(err);
+      await bot.api
+        .sendMessage(chatId, "⚠️ Ошибка стриминга: " + message)
+        .catch(() => undefined);
+      return;
+    }
+
+    try {
+      const result = await run.wait();
+      const dur = result.durationMs ? ` за ${(result.durationMs / 1000).toFixed(1)}s` : "";
+      let text: string;
+      switch (result.status) {
+        case "finished":
+          text = `🟢 Готово${dur}`;
           break;
-        case "request":
-          await bot.api.sendMessage(
-            chatId,
-            "⏸ Агент запросил подтверждение в IDE\\.",
-            { parse_mode: "MarkdownV2" },
-          );
+        case "cancelled":
+          text = `⚪ Отменено${dur}`;
+          break;
+        case "error":
+          text = `🔴 Ошибка${dur}`;
           break;
       }
-    }
-    await finishAssistantBuffer();
-  } catch (err) {
-    await finishAssistantBuffer();
-    logger.error({ err }, "stream error");
-    const message = err instanceof Error ? err.message : String(err);
-    await bot.api
-      .sendMessage(chatId, "⚠️ Ошибка стриминга: " + message)
-      .catch(() => undefined);
-    return;
-  }
-
-  try {
-    const result = await run.wait();
-    const dur = result.durationMs ? ` за ${(result.durationMs / 1000).toFixed(1)}s` : "";
-    let text: string;
-    switch (result.status) {
-      case "finished":
-        text = `🟢 Готово${dur}`;
-        break;
-      case "cancelled":
-        text = `⚪ Отменено${dur}`;
-        break;
-      case "error":
-        text = `🔴 Ошибка${dur}`;
-        break;
-    }
-    if (result.git?.branches?.length) {
-      const lines = result.git.branches
-        .map((b) => `• ${b.repoUrl}${b.branch ? ` @ ${b.branch}` : ""}${b.prUrl ? `\n  ${b.prUrl}` : ""}`)
-        .join("\n");
-      text += `\n\n${lines}`;
-    }
-    await bot.api.sendMessage(chatId, text, {
-      reply_markup: afterRunKeyboard(projectId),
-    });
-  } catch (err) {
-    logger.warn({ err }, "run.wait failed");
-    await bot.api
-      .sendMessage(chatId, "⚠️ Не удалось получить итог run.", {
+      if (result.git?.branches?.length) {
+        const lines = result.git.branches
+          .map((b) => `• ${b.repoUrl}${b.branch ? ` @ ${b.branch}` : ""}${b.prUrl ? `\n  ${b.prUrl}` : ""}`)
+          .join("\n");
+        text += `\n\n${lines}`;
+      }
+      await bot.api.sendMessage(chatId, text, {
         reply_markup: afterRunKeyboard(projectId),
-      })
-      .catch(() => undefined);
+      });
+    } catch (err) {
+      logger.warn({ err }, "run.wait failed");
+      await bot.api
+        .sendMessage(chatId, "⚠️ Не удалось получить итог run.", {
+          reply_markup: afterRunKeyboard(projectId),
+        })
+        .catch(() => undefined);
+    }
+  } finally {
+    try {
+      await outbox.stop();
+    } catch (err) {
+      logger.warn({ err }, "outbox stop failed");
+    }
   }
 }
 

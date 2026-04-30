@@ -101,6 +101,8 @@ function extractFirstUserText(message: unknown): string | undefined {
 
 export class AgentManager {
   private readonly cache = new Map<string, ActiveAgentEntry>();
+  // Serialises chdir() so concurrent SDK calls don't race on process.cwd().
+  private cwdQueue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly config: AppConfig) {}
 
@@ -108,21 +110,91 @@ export class AgentManager {
     return this.config.projects.find((p) => p.id === projectId);
   }
 
+  /**
+   * Workaround for @cursor/sdk 1.0.10: `local.cwd` passed to Agent.create()
+   * is ignored — the SDK uses `process.cwd()` to route the agent into the
+   * right SDK store and to set the agent's `workspace_ref`. Same for
+   * Agent.list() / Agent.resume() / Agent.messages.list() / Agent.listRuns().
+   *
+   * So before any SDK call we chdir() into the project's cwd, run the call,
+   * then chdir back. A soft mutex keeps these chdir windows non-overlapping
+   * across concurrent operations, but won't deadlock on a stuck call —
+   * after `MUTEX_WAIT_TIMEOUT_MS` we proceed regardless so a hung MCP
+   * child-process can't freeze the whole bot.
+   */
+  private static readonly MUTEX_WAIT_TIMEOUT_MS = 30_000;
+
+  private async runInProjectCwd<T>(
+    project: ProjectConfig,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = this.cwdQueue;
+    let release: () => void = () => undefined;
+    this.cwdQueue = new Promise<void>((r) => {
+      release = r;
+    });
+
+    let timedOut = false;
+    await Promise.race([
+      prev.catch(() => undefined),
+      new Promise<void>((r) =>
+        setTimeout(() => {
+          timedOut = true;
+          r();
+        }, AgentManager.MUTEX_WAIT_TIMEOUT_MS),
+      ),
+    ]);
+    if (timedOut) {
+      logger.warn(
+        { projectId: project.id },
+        "cwd mutex timed out waiting for previous op; proceeding anyway",
+      );
+    }
+
+    const saved = process.cwd();
+    let chdiredTo: string | undefined;
+    try {
+      if (saved !== project.cwd) {
+        try {
+          process.chdir(project.cwd);
+          chdiredTo = project.cwd;
+        } catch (err) {
+          logger.warn(
+            { err, target: project.cwd },
+            "chdir to project failed; running without it",
+          );
+        }
+      }
+      return await fn();
+    } finally {
+      if (chdiredTo !== undefined) {
+        try {
+          process.chdir(saved);
+        } catch (err) {
+          logger.warn({ err, saved }, "chdir back failed");
+        }
+      }
+      release();
+    }
+  }
+
   async listAgents(project: ProjectConfig): Promise<SDKAgentInfo[]> {
-    const collected: SDKAgentInfo[] = [];
-    let cursor: string | undefined;
-    do {
-      const page: ListResult<SDKAgentInfo> = await Agent.list({
-        runtime: "local",
-        cwd: project.cwd,
-        ...(cursor !== undefined ? { cursor } : {}),
-        limit: 50,
-      });
-      collected.push(...page.items);
-      cursor = page.nextCursor;
-    } while (cursor !== undefined && collected.length < 200);
-    collected.sort((a, b) => b.lastModified - a.lastModified);
-    return collected;
+    return this.runInProjectCwd(project, async () => {
+      const collected: SDKAgentInfo[] = [];
+      let cursor: string | undefined;
+      do {
+        const page: ListResult<SDKAgentInfo> = await Agent.list({
+          runtime: "local",
+          cwd: project.cwd,
+          ...(cursor !== undefined ? { cursor } : {}),
+          limit: 50,
+        });
+        collected.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor !== undefined && collected.length < 200);
+      collected.sort((a, b) => b.lastModified - a.lastModified);
+      return collected;
+    });
   }
 
   private async buildMcpServers(
@@ -151,16 +223,18 @@ export class AgentManager {
       "creating new local agent",
     );
     const mcpServers = await this.buildMcpServers(project);
-    const agent = await Agent.create({
-      apiKey: this.config.cursorApiKey,
-      model: this.config.defaultModel,
-      ...(name ? { name } : {}),
-      local: {
-        cwd: project.cwd,
-        settingSources: ["user", "project"],
-      },
-      ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
-    });
+    const agent = await this.runInProjectCwd(project, () =>
+      Agent.create({
+        apiKey: this.config.cursorApiKey,
+        model: this.config.defaultModel,
+        ...(name ? { name } : {}),
+        local: {
+          cwd: project.cwd,
+          settingSources: ["user", "project"],
+        },
+        ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+      }),
+    );
     this.cache.set(agent.agentId, {
       agent,
       projectId: project.id,
@@ -174,15 +248,17 @@ export class AgentManager {
     if (cached) return cached.agent;
     logger.info({ agentId, projectId: project.id }, "resuming local agent");
     const mcpServers = await this.buildMcpServers(project);
-    const agent = await Agent.resume(agentId, {
-      apiKey: this.config.cursorApiKey,
-      model: this.config.defaultModel,
-      local: {
-        cwd: project.cwd,
-        settingSources: ["user", "project"],
-      },
-      ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
-    });
+    const agent = await this.runInProjectCwd(project, () =>
+      Agent.resume(agentId, {
+        apiKey: this.config.cursorApiKey,
+        model: this.config.defaultModel,
+        local: {
+          cwd: project.cwd,
+          settingSources: ["user", "project"],
+        },
+        ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+      }),
+    );
     this.cache.set(agent.agentId, {
       agent,
       projectId: project.id,
@@ -209,15 +285,23 @@ export class AgentManager {
     agent: SDKAgent,
     message: string | SDKUserMessage,
   ): Promise<Run> {
+    const entry = this.cache.get(agent.agentId);
+    const project = entry ? this.getProject(entry.projectId) : undefined;
+    const send = async (force: boolean): Promise<Run> => {
+      const opts = force ? { local: { force: true } } : undefined;
+      const fn = (): Promise<Run> =>
+        opts ? agent.send(message, opts) : agent.send(message);
+      return project ? this.runInProjectCwd(project, fn) : fn();
+    };
     try {
-      return await agent.send(message);
+      return await send(false);
     } catch (err) {
       if (this.isStuckActiveRunError(err)) {
         logger.warn(
           { agentId: agent.agentId },
           "agent has stuck active run, retrying with local.force=true",
         );
-        return await agent.send(message, { local: { force: true } });
+        return await send(true);
       }
       throw err;
     }
@@ -246,11 +330,13 @@ export class AgentManager {
     agentId: string,
   ): Promise<string | undefined> {
     try {
-      const messages = await Agent.messages.list(agentId, {
-        runtime: "local",
-        cwd: project.cwd,
-        limit: 5,
-      });
+      const messages = await this.runInProjectCwd(project, () =>
+        Agent.messages.list(agentId, {
+          runtime: "local",
+          cwd: project.cwd,
+          limit: 5,
+        }),
+      );
       for (const m of messages) {
         if (m.type !== "user") continue;
         const text = extractFirstUserText(m.message);
@@ -289,11 +375,13 @@ export class AgentManager {
   ): Promise<string | undefined> {
     let runs;
     try {
-      runs = await Agent.listRuns(agentId, {
-        runtime: "local",
-        cwd: project.cwd,
-        limit: 20,
-      });
+      runs = await this.runInProjectCwd(project, () =>
+        Agent.listRuns(agentId, {
+          runtime: "local",
+          cwd: project.cwd,
+          limit: 20,
+        }),
+      );
     } catch (err) {
       logger.warn({ err, agentId }, "listRuns failed");
       return undefined;
@@ -306,7 +394,7 @@ export class AgentManager {
       if (run.result && run.result.trim().length > 0) return run.result;
       if (!run.supports("conversation")) continue;
       try {
-        const turns = await run.conversation();
+        const turns = await this.runInProjectCwd(project, () => run.conversation());
         const text = extractLastAssistantText(turns);
         if (text) return text;
       } catch (err) {
