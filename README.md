@@ -117,6 +117,20 @@ cp .env.example .env
 
 ## Запуск
 
+### Двойной клик (Windows)
+
+В корне репо лежит `start-bot.cmd` — его можно запустить **двойным кликом** в проводнике. Скрипт:
+
+1. Убивает предыдущий процесс бота (если был запущен — например, из другого окна или `tsx watch` оставил «зомби»).
+2. Ждёт 2 секунды для корректного освобождения long-poll.
+3. Запускает `npm run serve` в открывшемся cmd-окне с логами (полный production-цикл: `tsc` build → `node dist/index.js`).
+
+После закрытия (Ctrl+C) окно остаётся открытым с `pause`, чтобы можно было прочитать последние логи.
+
+Если правите код — нужно перезапустить (двойной клик заново). Если хотите hot-reload во время разработки — используйте `npm run dev` из консоли.
+
+Для kill-логики используется `scripts/kill-bot.ps1` — отдельный PowerShell-скрипт, который ищет node-процессы с командной строкой содержащей `cursor-tg-bot`, `tsx ... src/index.ts` или `dist/index.js` и `Stop-Process -Force` их.
+
 ### Dev (с hot-reload)
 
 ```bash
@@ -351,6 +365,16 @@ npm run list-agents
 
 В самом боте чат виден через `📁 Проекты → <Project> → 💬 Чаты` (счётчик в заголовке отражает реальное количество).
 
+### `bot.start()` зависает на старте (Windows + корпоративная сеть)
+
+Симптомы: в логе `starting cursor-tg-bot` и `sessions loaded`, но `telegram bot started` не появляется. Через `Invoke-WebRequest` Telegram API отвечает мгновенно, через Node — нет.
+
+Причина: TLS-инспектор (Zscaler / Fortinet / Kaspersky / антивирус) подменяет сертификаты, Windows-store доверяет, а Node — нет (у него свой CA bundle). PowerShell использует Windows store, Node — нет.
+
+Решение: бот автоматически подхватывает CAs из Windows store через [`win-ca`](https://www.npmjs.com/package/win-ca) с режимом `inject: "+"` (патчит `tls.createSecureContext`, поэтому работает и для `node:https`, и для native `fetch` / undici). Это происходит в самом начале `src/index.ts`. На macOS/Linux этот блок пропускается.
+
+Если бот всё равно зависает на старте — проверьте, что у вас Windows-сертификаты обновлены (`certutil -urlfetch -verify`), или временно установите `NODE_TLS_REJECT_UNAUTHORIZED=0` в `.env` (НЕБЕЗОПАСНО, только для отладки).
+
 ### Telegram rate limit (`429 Too Many Requests`)
 
 Увеличьте `STREAM_EDIT_DEBOUNCE_MS` в `.env` (например, до `1500`). По умолчанию `900` мс — комфортно для одного активного диалога.
@@ -371,6 +395,21 @@ npm run list-agents
 - [x] Список IDE-чатов в `📋 Чаты` рядом с SDK-чатами.
 - [x] Просмотр последнего ответа агента в IDE-чате.
 - [x] «🔄 Продолжить в боте» — bootstrap нового SDK-агента с историей IDE-чата.
+
+### v0.4 — Удаление чатов ✅
+
+- [x] Режим «🗑 Управление» в списке чатов: появляется корзинка только у SDK-чатов.
+- [x] Подтверждение перед удалением (Да / Отмена).
+- [x] Удаление SDK-агентов: запись из `sdk-agent-store/.../index.db` (агент + runs + run_events) + директория транскрипта + закрытие активных handles.
+- [x] **IDE-чаты НЕ удаляются** — Cursor IDE использует их транскрипты для собственной работы; удаление может повредить установку IDE. Защита на двух уровнях: UI (кнопка просто не показывается) + код (`deleteTranscriptFolder` и `deleteSdkAgent` отказываются работать с папками без префикса `agent-`).
+- [x] Очистка сессии, если активный чат был удалён.
+
+### v0.5 — Recovery после рестарта ✅
+
+- [x] При старте бот проходит по сохранённым `activeRunId` и через `Agent.getRun()` ждёт их завершения с timeout 5 минут — присылает итог в Telegram.
+- [x] Авто-recovery залипшего persistent run при следующем `agent.send()` через флаг `local: { force: true }` (автоматический retry в `manager.sendMessage`).
+- [x] Persistent-сессии в `data/sessions.json`.
+- [x] Поддержка корпоративных TLS-инспекторов через `win-ca.inject('+')`.
 
 ### v0.4 — Блокирующий shell-approval
 

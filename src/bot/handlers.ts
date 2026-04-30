@@ -10,6 +10,7 @@ import {
   CB,
   activeChatKeyboard,
   chatsKeyboard,
+  deleteConfirmKeyboard,
   ideChatKeyboard,
   projectKeyboard,
   projectsKeyboard,
@@ -141,7 +142,14 @@ export function registerHandlers(
     const projectId = ctx.match[1];
     if (!projectId) return;
     await ctx.answerCallbackQuery();
-    await sendChatsList(ctx, manager, projectId, /*edit*/ true);
+    await sendChatsList(ctx, manager, projectId, { edit: true });
+  });
+
+  bot.callbackQuery(/^chats_m:(.+)$/, async (ctx) => {
+    const projectId = ctx.match[1];
+    if (!projectId) return;
+    await ctx.answerCallbackQuery();
+    await sendChatsList(ctx, manager, projectId, { edit: true, manageMode: true });
   });
 
   bot.callbackQuery(/^csdk:([^:]+):(.+)$/, async (ctx) => {
@@ -243,6 +251,91 @@ export function registerHandlers(
         "_Это новый агент с другим id; в IDE-чате синхронизации не будет._",
       { parse_mode: "Markdown" },
     );
+  });
+
+  bot.callbackQuery(/^d:([^:]+):([si]):(.+)$/, async (ctx) => {
+    const projectId = ctx.match[1];
+    const kindShort = ctx.match[2] as "s" | "i";
+    const chatId = ctx.match[3];
+    if (!projectId || !chatId) return;
+    if (kindShort === "i") {
+      await ctx.answerCallbackQuery({
+        text: "IDE-чаты удалять нельзя — Cursor использует их транскрипты.",
+        show_alert: true,
+      });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `🗑️ *Удалить SDK-чат?*\n\`${chatId}\`\n\n_Это действие нельзя отменить._`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: deleteConfirmKeyboard(projectId, kindShort, chatId),
+      },
+    );
+  });
+
+  bot.callbackQuery(/^dn:([^:]+):([si]):(.+)$/, async (ctx) => {
+    const projectId = ctx.match[1];
+    if (!projectId) return;
+    await ctx.answerCallbackQuery({ text: "Отменено" });
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // confirmation was edited, ignore
+    }
+    await sendChatsList(ctx, manager, projectId, { manageMode: true });
+  });
+
+  bot.callbackQuery(/^dy:([^:]+):([si]):(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
+    const projectId = ctx.match[1];
+    const kindShort = ctx.match[2] as "s" | "i";
+    const chatId = ctx.match[3];
+    if (!projectId || !chatId) return;
+    if (kindShort === "i") {
+      await ctx.answerCallbackQuery({
+        text: "IDE-чаты удалять нельзя.",
+        show_alert: true,
+      });
+      return;
+    }
+    const project = manager.getProject(projectId);
+    if (!project) {
+      await ctx.answerCallbackQuery({ text: "Проект не найден", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    try {
+      await manager.deleteSdkAgent(project, chatId);
+    } catch (err) {
+      logger.error({ err, chatId }, "delete chat failed");
+      await ctx.reply("Не удалось удалить чат: " + manager.describeError(err));
+      return;
+    }
+
+    const session = sessions.get(ctx.from.id);
+    if (session.activeAgentId === chatId) {
+      sessions.patch(ctx.from.id, {
+        activeAgentId: undefined,
+        activeChatKind: undefined,
+        activeRunId: undefined,
+        awaitingText: undefined,
+      });
+    }
+
+    logger.info(
+      { userId: ctx.from.id, projectId, chatId, kind: kindShort },
+      "chat deleted",
+    );
+
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // ignore
+    }
+    await ctx.reply(`✅ Чат удалён: \`${chatId}\``, { parse_mode: "Markdown" });
+    await sendChatsList(ctx, manager, projectId, { manageMode: true });
   });
 
   bot.callbackQuery(/^new_chat:(.+)$/, async (ctx) => {
@@ -412,8 +505,9 @@ async function sendChatsList(
   ctx: Context,
   manager: AgentManager,
   projectId: string,
-  edit = false,
+  options: { edit?: boolean; manageMode?: boolean } = {},
 ): Promise<void> {
+  const { edit = false, manageMode = false } = options;
   const project = manager.getProject(projectId);
   if (!project) {
     if (edit) await ctx.editMessageText("Проект не найден.");
@@ -436,12 +530,15 @@ async function sendChatsList(
   const ideChats = ideResult.status === "fulfilled" ? ideResult.value : [];
   const total = sdkAgents.length + ideChats.length;
 
-  const header =
-    `💬 Чаты в *${project.name}* (${total})\n` +
-    `_💬 SDK: ${sdkAgents.length} · 👀 IDE: ${ideChats.length}_`;
+  const titleIcon = manageMode ? "🗑" : "💬";
+  const subtitle = manageMode
+    ? "_Тапните 🗑 справа от чата, чтобы удалить._"
+    : `_💬 SDK: ${sdkAgents.length} · 👀 IDE: ${ideChats.length}_`;
+  const header = `${titleIcon} Чаты в *${project.name}* (${total})\n${subtitle}`;
+
   const opts = {
     parse_mode: "Markdown" as const,
-    reply_markup: chatsKeyboard(projectId, sdkAgents, ideChats),
+    reply_markup: chatsKeyboard(projectId, sdkAgents, ideChats, { manageMode }),
   };
   if (edit) await ctx.editMessageText(header, opts);
   else await ctx.reply(header, opts);

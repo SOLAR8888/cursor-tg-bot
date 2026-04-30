@@ -9,6 +9,8 @@ import type {
 import type { AppConfig, ProjectConfig } from "../types.js";
 import { logger } from "../logger.js";
 import { loadMcpServersAsRecord } from "../cursor/mcp-loader.js";
+import { deleteTranscriptFolder } from "../cursor/ide-store.js";
+import { deleteSdkAgentRecords } from "../cursor/sdk-store.js";
 
 interface ActiveAgentEntry {
   agent: SDKAgent;
@@ -312,6 +314,26 @@ export class AgentManager {
       }
     }
     return undefined;
+  }
+
+  async deleteSdkAgent(project: ProjectConfig, agentId: string): Promise<void> {
+    if (!agentId.startsWith("agent-")) {
+      throw new Error(
+        `Refusing to delete non-SDK chat "${agentId}" (only ids prefixed with "agent-" are SDK)`,
+      );
+    }
+    await this.closeAgent(agentId);
+    try {
+      await deleteSdkAgentRecords(project.cwd, agentId);
+    } catch (err) {
+      logger.error({ err, agentId }, "deleteSdkAgentRecords failed");
+      throw err;
+    }
+    try {
+      await deleteTranscriptFolder(project.cwd, agentId);
+    } catch (err) {
+      logger.warn({ err, agentId }, "deleteTranscriptFolder for sdk failed (non-fatal)");
+    }
   }
 
   async closeAgent(agentId: string): Promise<void> {

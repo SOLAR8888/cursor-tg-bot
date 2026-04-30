@@ -25,6 +25,7 @@
     "p-retry": "latest",
     "pino": "latest",
     "pino-pretty": "latest",
+    "win-ca": "^3.5.1",
     "zod": "latest"
   },
   "devDependencies": {

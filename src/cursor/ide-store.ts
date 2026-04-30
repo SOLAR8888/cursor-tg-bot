@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logger.js";
@@ -179,6 +179,31 @@ export function getLastAssistantText(transcript: TranscriptEntry[]): string | un
     if (e.role === "assistant" && e.text.trim().length > 0) return e.text;
   }
   return undefined;
+}
+
+/**
+ * Delete the agent-transcripts/<agentId>/ folder.
+ *
+ * SAFETY: only directories with an "agent-" prefix (= SDK agents) are
+ * accepted. IDE chats live in folders without that prefix and are used
+ * by Cursor IDE itself; deleting them can corrupt the IDE installation.
+ */
+export async function deleteTranscriptFolder(
+  cwd: string,
+  folderName: string,
+): Promise<void> {
+  if (!folderName.startsWith("agent-")) {
+    throw new Error(
+      `Refusing to delete transcript folder "${folderName}" — only SDK agent folders (prefix "agent-") may be removed.`,
+    );
+  }
+  const dir = path.join(ideTranscriptsDir(cwd), folderName);
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    logger.warn({ err, dir }, "failed to delete transcript folder");
+    throw err;
+  }
 }
 
 export function buildBootstrapPrompt(

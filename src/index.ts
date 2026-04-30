@@ -1,3 +1,15 @@
+// On Windows, load CA certificates from the Windows certificate store
+// before any TLS-using module is imported. Required when corporate networks
+// inject TLS-inspection certificates (Zscaler / Fortinet / Kaspersky / etc).
+if (process.platform === "win32") {
+  // @ts-expect-error - win-ca has no types
+  const wca = await import("win-ca");
+  // inject Windows-store CAs into the global TLS context so that
+  // native fetch (undici) and node:https trust corporate TLS-inspection
+  // certificates (Zscaler / Fortinet / Kaspersky / antivirus / etc).
+  wca.default({ inject: "+" });
+}
+
 import { GrammyError } from "grammy";
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
