@@ -139,11 +139,50 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
     }
   };
 
+  const startedAt = Date.now();
+  let lastEventAt = startedAt;
+  let eventCount = 0;
+  const heartbeat = setInterval(() => {
+    const now = Date.now();
+    logger.warn(
+      {
+        projectId,
+        runId: run.id,
+        agentId: run.agentId,
+        sinceStartMs: now - startedAt,
+        sinceLastEventMs: now - lastEventAt,
+        eventCount,
+      },
+      "stream heartbeat (no events recently)",
+    );
+  }, 30_000);
+
   try {
     try {
       for await (const event of run.stream()) {
+        eventCount += 1;
+        lastEventAt = Date.now();
+        const summary: Record<string, unknown> = { type: (event as { type: string }).type };
+        if (event.type === "tool_call") {
+          summary.name = event.name;
+          summary.status = event.status;
+          summary.callId = event.call_id;
+        } else if (event.type === "status") {
+          summary.status = event.status;
+        } else if (event.type === "system") {
+          summary.modelId = event.model?.id;
+          summary.tools = event.tools?.length;
+        } else if (event.type === "assistant") {
+          const blocks = event.message?.content ?? [];
+          summary.blocks = blocks.length;
+          summary.kinds = blocks.map((b) => (b as { type: string }).type);
+        }
+        logger.debug(
+          { projectId, runId: run.id, agentId: run.agentId, eventCount, ...summary },
+          "stream event",
+        );
         if (logMessages) {
-          logger.debug({ event }, "stream event");
+          logger.debug({ event }, "stream event payload");
         }
         switch (event.type) {
           case "system": {
@@ -197,11 +236,28 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
         }
       }
       await finishAssistantBuffer();
-      logger.debug({ projectId, runId: run.id, agentId: run.agentId }, "stream loop ended");
+      logger.info(
+        {
+          projectId,
+          runId: run.id,
+          agentId: run.agentId,
+          eventCount,
+          durationMs: Date.now() - startedAt,
+        },
+        "stream loop ended",
+      );
     } catch (err) {
       await finishAssistantBuffer();
       logger.error(
-        { err, projectId, runId: run.id, agentId: run.agentId, userId },
+        {
+          err,
+          projectId,
+          runId: run.id,
+          agentId: run.agentId,
+          userId,
+          eventCount,
+          durationMs: Date.now() - startedAt,
+        },
         "stream error",
       );
       const message = err instanceof Error ? err.message : String(err);
@@ -266,6 +322,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
         .catch(() => undefined);
     }
   } finally {
+    clearInterval(heartbeat);
     try {
       await outbox.stop();
     } catch (err) {
