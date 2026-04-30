@@ -3,6 +3,29 @@ import type { ProjectConfig } from "../types.js";
 import type { SDKAgentInfo } from "@cursor/sdk";
 import type { IdeChatInfo } from "../cursor/ide-store.js";
 
+const TG_CALLBACK_DATA_LIMIT = 64;
+
+// SDK agent IDs always start with "agent-". Strip the prefix in callback_data
+// so we stay under Telegram's 64-byte limit for projects with longer ids.
+export function shortenSdkAgentId(id: string): string {
+  return id.startsWith("agent-") ? id.slice("agent-".length) : id;
+}
+
+export function restoreSdkAgentId(short: string): string {
+  return short.startsWith("agent-") ? short : `agent-${short}`;
+}
+
+function assertCallbackFits(data: string): string {
+  if (Buffer.byteLength(data, "utf8") > TG_CALLBACK_DATA_LIMIT) {
+    // Telegram will reject the whole keyboard with BUTTON_DATA_INVALID. Throw
+    // early so the bug surfaces in our logs instead of from the API.
+    throw new Error(
+      `callback_data exceeds ${TG_CALLBACK_DATA_LIMIT} bytes: ${data}`,
+    );
+  }
+  return data;
+}
+
 export const CB = {
   ROOT: "root",
   PROJECTS: "projects",
@@ -68,10 +91,18 @@ export function chatsKeyboard(
       for (const a of sdkAgents) {
         const status = a.status === "running" ? "🔵" : a.status === "error" ? "🔴" : "💬";
         const label = `${status} ${truncate(a.name || a.summary || a.agentId, manage ? 32 : 60)}`;
-        const callback = `${CB.CHAT_SDK}:${projectId}:${a.agentId}`;
+        const shortId = shortenSdkAgentId(a.agentId);
+        const callback = assertCallbackFits(
+          `${CB.CHAT_SDK}:${projectId}:${shortId}`,
+        );
         if (manage) {
           kb.text(label, callback)
-            .text("🗑", `${CB.DELETE_ASK}:${projectId}:s:${a.agentId}`)
+            .text(
+              "🗑",
+              assertCallbackFits(
+                `${CB.DELETE_ASK}:${projectId}:s:${shortId}`,
+              ),
+            )
             .row();
         } else {
           kb.text(label, callback).row();
@@ -81,7 +112,9 @@ export function chatsKeyboard(
     if (ideChats.length > 0) {
       for (const c of ideChats) {
         const label = `👀 ${truncate(c.name, 60)}`;
-        const callback = `${CB.CHAT_IDE}:${projectId}:${c.id}`;
+        const callback = assertCallbackFits(
+          `${CB.CHAT_IDE}:${projectId}:${c.id}`,
+        );
         kb.text(label, callback).row();
       }
     }
@@ -102,9 +135,18 @@ export function deleteConfirmKeyboard(
   kind: ChatKindShort,
   chatId: string,
 ): InlineKeyboard {
+  const shortId = kind === "s" ? shortenSdkAgentId(chatId) : chatId;
   return new InlineKeyboard()
-    .text("🗑️ Да, удалить", `${CB.DELETE_YES}:${projectId}:${kind}:${chatId}`)
-    .text("⬅️ Отмена", `${CB.DELETE_NO}:${projectId}:${kind}:${chatId}`);
+    .text(
+      "🗑️ Да, удалить",
+      assertCallbackFits(
+        `${CB.DELETE_YES}:${projectId}:${kind}:${shortId}`,
+      ),
+    )
+    .text(
+      "⬅️ Отмена",
+      assertCallbackFits(`${CB.DELETE_NO}:${projectId}:${kind}:${shortId}`),
+    );
 }
 
 export function activeChatKeyboard(projectId: string, isRunning: boolean): InlineKeyboard {
@@ -120,7 +162,12 @@ export function activeChatKeyboard(projectId: string, isRunning: boolean): Inlin
 
 export function ideChatKeyboard(projectId: string, ideChatId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🔄 Продолжить в боте", `${CB.CONTINUE_IDE}:${projectId}:${ideChatId}`)
+    .text(
+      "🔄 Продолжить в боте",
+      assertCallbackFits(
+        `${CB.CONTINUE_IDE}:${projectId}:${ideChatId}`,
+      ),
+    )
     .row()
     .text("📋 Чаты", `${CB.CHATS}:${projectId}`)
     .text("➕ Новый", `${CB.NEW_CHAT}:${projectId}`)

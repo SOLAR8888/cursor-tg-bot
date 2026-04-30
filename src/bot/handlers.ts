@@ -15,6 +15,7 @@ import {
   ideChatKeyboard,
   projectKeyboard,
   projectsKeyboard,
+  restoreSdkAgentId,
   rootKeyboard,
 } from "./keyboards.js";
 import { loadMcpServers, summarizeMcpEntry } from "../cursor/mcp-loader.js";
@@ -173,7 +174,7 @@ export function registerHandlers(
   bot.callbackQuery(/^csdk:([^:]+):(.+)$/, async (ctx) => {
     if (!ctx.from) return;
     const projectId = ctx.match[1];
-    const agentId = ctx.match[2];
+    const agentId = ctx.match[2] ? restoreSdkAgentId(ctx.match[2]) : undefined;
     if (!projectId || !agentId) return;
     const project = manager.getProject(projectId);
     if (!project) {
@@ -274,8 +275,9 @@ export function registerHandlers(
   bot.callbackQuery(/^d:([^:]+):([si]):(.+)$/, async (ctx) => {
     const projectId = ctx.match[1];
     const kindShort = ctx.match[2] as "s" | "i";
-    const chatId = ctx.match[3];
-    if (!projectId || !chatId) return;
+    const rawChatId = ctx.match[3];
+    if (!projectId || !rawChatId) return;
+    const chatId = kindShort === "s" ? restoreSdkAgentId(rawChatId) : rawChatId;
     if (kindShort === "i") {
       await ctx.answerCallbackQuery({
         text: "IDE-чаты удалять нельзя — Cursor использует их транскрипты.",
@@ -309,8 +311,9 @@ export function registerHandlers(
     if (!ctx.from) return;
     const projectId = ctx.match[1];
     const kindShort = ctx.match[2] as "s" | "i";
-    const chatId = ctx.match[3];
-    if (!projectId || !chatId) return;
+    const rawChatId = ctx.match[3];
+    if (!projectId || !rawChatId) return;
+    const chatId = kindShort === "s" ? restoreSdkAgentId(rawChatId) : rawChatId;
     if (kindShort === "i") {
       await ctx.answerCallbackQuery({
         text: "IDE-чаты удалять нельзя.",
