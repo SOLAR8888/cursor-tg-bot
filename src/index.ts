@@ -20,6 +20,52 @@ import { recoverActiveRuns } from "./agents/recovery.js";
 
 const RUNTIME_ERROR_RETRY_MS = 2000;
 
+function isTransientNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const msg = (err as { message?: unknown }).message;
+  const code = (err as { code?: unknown }).code;
+  const cause = (err as { cause?: unknown }).cause;
+  const text = typeof msg === "string" ? msg : "";
+  if (typeof code === "string") {
+    if (
+      code === "EAI_AGAIN" ||
+      code === "ENOTFOUND" ||
+      code === "ETIMEDOUT" ||
+      code === "ECONNRESET" ||
+      code === "ECONNREFUSED" ||
+      code === "EPIPE"
+    ) {
+      return true;
+    }
+  }
+  if (
+    text.includes("EAI_AGAIN") ||
+    text.includes("ENOTFOUND") ||
+    text.includes("ETIMEDOUT") ||
+    text.includes("ECONNRESET") ||
+    text.includes("getaddrinfo")
+  ) {
+    return true;
+  }
+  return cause !== err && cause !== undefined && isTransientNetworkError(cause);
+}
+
+process.on("unhandledRejection", (reason) => {
+  if (isTransientNetworkError(reason)) {
+    logger.warn({ err: reason }, "transient network error (unhandledRejection); ignored");
+    return;
+  }
+  logger.error({ err: reason }, "unhandled promise rejection");
+});
+
+process.on("uncaughtException", (err) => {
+  if (isTransientNetworkError(err)) {
+    logger.warn({ err }, "transient network error (uncaughtException); ignored");
+    return;
+  }
+  logger.error({ err }, "uncaught exception");
+});
+
 async function main(): Promise<void> {
   const config = await loadConfig();
   logger.info(

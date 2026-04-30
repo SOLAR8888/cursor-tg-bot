@@ -11,3 +11,4 @@ data/
 Thumbs.db
 .idea/
 .vscode/
+*.lnk
