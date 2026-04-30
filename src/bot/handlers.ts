@@ -737,6 +737,7 @@ async function dispatchUserMessage(
     chatId: ctx.chat.id,
     run,
     projectId,
+    userId: ctx.from.id,
     showThinking: config.showThinking,
     debounceMs: config.streamEditDebounceMs,
   }).finally(() => {

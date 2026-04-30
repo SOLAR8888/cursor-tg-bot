@@ -15,6 +15,7 @@ interface StreamRunOptions {
   chatId: number;
   run: Run;
   projectId: string;
+  userId?: number;
   showThinking: boolean;
   debounceMs: number;
 }
@@ -27,7 +28,8 @@ interface AssistantBuffer {
 }
 
 export async function streamRun(opts: StreamRunOptions): Promise<void> {
-  const { bot, chatId, run, projectId, showThinking, debounceMs } = opts;
+  const { bot, chatId, run, projectId, userId, showThinking, debounceMs } =
+    opts;
 
   const outbox = startOutboxWatcher({ bot, chatId, projectId });
 
@@ -195,9 +197,13 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
         }
       }
       await finishAssistantBuffer();
+      logger.debug({ projectId, runId: run.id, agentId: run.agentId }, "stream loop ended");
     } catch (err) {
       await finishAssistantBuffer();
-      logger.error({ err }, "stream error");
+      logger.error(
+        { err, projectId, runId: run.id, agentId: run.agentId, userId },
+        "stream error",
+      );
       const message = err instanceof Error ? err.message : String(err);
       await bot.api
         .sendMessage(chatId, "⚠️ Ошибка стриминга: " + message)
@@ -207,6 +213,22 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
 
     try {
       const result = await run.wait();
+      const logPayload = {
+        projectId,
+        runId: run.id,
+        agentId: run.agentId,
+        userId,
+        status: result.status,
+        durationMs: result.durationMs,
+        ...(result.status === "error" && result.result
+          ? { errorDetail: result.result }
+          : {}),
+      };
+      if (result.status === "error") {
+        logger.error(logPayload, "run finished with error");
+      } else {
+        logger.info(logPayload, "run finished");
+      }
       const dur = result.durationMs ? ` за ${(result.durationMs / 1000).toFixed(1)}s` : "";
       let text: string;
       switch (result.status) {
@@ -217,7 +239,10 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
           text = `⚪ Отменено${dur}`;
           break;
         case "error":
-          text = `🔴 Ошибка${dur}`;
+          text =
+            result.result && result.result.trim().length > 0
+              ? `🔴 Ошибка${dur}\n\n${result.result}`
+              : `🔴 Ошибка${dur}`;
           break;
       }
       if (result.git?.branches?.length) {
@@ -230,7 +255,10 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
         reply_markup: afterRunKeyboard(projectId),
       });
     } catch (err) {
-      logger.warn({ err }, "run.wait failed");
+      logger.warn(
+        { err, projectId, runId: run.id, agentId: run.agentId, userId },
+        "run.wait failed",
+      );
       await bot.api
         .sendMessage(chatId, "⚠️ Не удалось получить итог run.", {
           reply_markup: afterRunKeyboard(projectId),
