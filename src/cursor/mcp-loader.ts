@@ -54,6 +54,15 @@ export async function loadMcpServers(cwd: string): Promise<McpServerEntry[]> {
   return entries;
 }
 
+export async function loadMcpServersAsRecord(
+  cwd: string,
+): Promise<Record<string, McpServerConfig>> {
+  const entries = await loadMcpServers(cwd);
+  const out: Record<string, McpServerConfig> = {};
+  for (const e of entries) out[e.name] = e.config;
+  return out;
+}
+
 export function summarizeMcpEntry(entry: McpServerEntry): string {
   const c = entry.config;
   if ("url" in c) {

@@ -1,9 +1,11 @@
 import type { Bot, CallbackQueryContext, CommandContext, Context } from "grammy";
 import type { AgentManager } from "../agents/manager.js";
+import { deriveAgentName } from "../agents/manager.js";
 import type { AppConfig, ProjectConfig } from "../types.js";
 import type { SessionStore } from "./session.js";
 import { logger } from "../logger.js";
 import { streamRun } from "../agents/streamer.js";
+import { chunkText } from "../util/chunk.js";
 import {
   CB,
   activeChatKeyboard,
@@ -156,14 +158,36 @@ export function registerHandlers(
       await ctx.reply("Не удалось подключиться к агенту: " + manager.describeError(err));
       return;
     }
-    await ctx.reply(
-      `📂 *${project.name}* · агент \`${agentId}\`\n` +
-        "Пишите сообщение — оно уйдёт агенту. /cancel — прервать run, /status — статус.",
-      {
-        parse_mode: "Markdown",
-        reply_markup: activeChatKeyboard(projectId, manager.isAgentBusy(agentId)),
-      },
-    );
+
+    await ctx.reply(`📂 *${project.name}* · агент \`${agentId}\``, {
+      parse_mode: "Markdown",
+    });
+
+    const lastText = await manager.getLastAssistantText(project, agentId);
+    if (lastText) {
+      const parts = chunkText(lastText);
+      const lastIdx = parts.length - 1;
+      for (let i = 0; i < parts.length; i++) {
+        const isLast = i === lastIdx;
+        await ctx.reply(parts[i] ?? "", {
+          ...(isLast
+            ? {
+                reply_markup: activeChatKeyboard(
+                  projectId,
+                  manager.isAgentBusy(agentId),
+                ),
+              }
+            : {}),
+        });
+      }
+    } else {
+      await ctx.reply(
+        "У этого агента ещё нет ответов. Напишите первое сообщение.",
+        {
+          reply_markup: activeChatKeyboard(projectId, manager.isAgentBusy(agentId)),
+        },
+      );
+    }
   });
 
   bot.callbackQuery(/^new_chat:(.+)$/, async (ctx) => {
@@ -196,10 +220,15 @@ export function registerHandlers(
     if (text.startsWith("/")) return;
 
     const session = sessions.get(ctx.from.id);
-    const projectId = session.selectedProjectId;
+    let projectId = session.selectedProjectId;
     if (!projectId) {
-      await ctx.reply("Сначала выберите проект: /projects");
-      return;
+      if (config.projects.length === 1 && config.projects[0]) {
+        projectId = config.projects[0].id;
+        sessions.patch(ctx.from.id, { selectedProjectId: projectId });
+      } else {
+        await ctx.reply("Сначала выберите проект: /projects");
+        return;
+      }
     }
     const project = manager.getProject(projectId);
     if (!project) {
@@ -209,16 +238,29 @@ export function registerHandlers(
 
     let agentId = session.activeAgentId;
     let isNewChat = false;
-    if (session.awaitingTextFor === "new_chat" || !agentId) {
+    const explicitNewChat = session.awaitingTextFor === "new_chat";
+
+    if (!agentId && !explicitNewChat) {
+      await ctx.reply(
+        `Откройте чат в проекте *${project.name}*: /chats — или нажмите «➕ Новый чат», чтобы начать новый.`,
+        { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
+    if (explicitNewChat || !agentId) {
+      const name = deriveAgentName(text);
       try {
-        const created = await manager.createAgent(project);
+        const created = await manager.createAgent(project, name);
         agentId = created.agentId;
         sessions.patch(ctx.from.id, {
           activeAgentId: agentId,
           awaitingTextFor: undefined,
         });
         isNewChat = true;
-        await ctx.reply(`🆕 Новый агент \`${agentId}\``, { parse_mode: "Markdown" });
+        await ctx.reply(`🆕 Новый чат: *${name}*\n\`${agentId}\``, {
+          parse_mode: "Markdown",
+        });
       } catch (err) {
         logger.error({ err }, "createAgent failed");
         await ctx.reply("Не удалось создать агента: " + manager.describeError(err));
@@ -262,6 +304,7 @@ export function registerHandlers(
       bot,
       chatId: ctx.chat.id,
       run,
+      projectId,
       showThinking: config.showThinking,
       debounceMs: config.streamEditDebounceMs,
     }).finally(() => {
@@ -270,10 +313,6 @@ export function registerHandlers(
     });
   });
 
-  // ---------- ERROR HANDLER ----------
-  bot.catch((err) => {
-    logger.error({ err: err.error, ctx: err.ctx?.update?.update_id }, "bot error");
-  });
 }
 
 function formatProjectInfo(project: ProjectConfig): string {
@@ -295,7 +334,7 @@ async function sendChatsList(
   }
   let agents;
   try {
-    agents = await manager.listAgents(project);
+    agents = await manager.listAgentsWithNames(project);
   } catch (err) {
     logger.error({ err, projectId }, "list agents failed");
     const msg = "Не удалось получить список чатов: " + manager.describeError(err);

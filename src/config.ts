@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { ModelSelection } from "@cursor/sdk";
 import type { AppConfig, ProjectConfig } from "./types.js";
 
-dotenvConfig({ quiet: true });
+dotenvConfig({ quiet: true, override: true });
 
 const projectSchema = z.object({
   id: z

@@ -2,6 +2,7 @@ import type { Bot, Context } from "grammy";
 import type { Run, SDKMessage } from "@cursor/sdk";
 import { logger, logMessages } from "../logger.js";
 import { TG_MAX_TEXT, chunkText } from "../util/chunk.js";
+import { afterRunKeyboard } from "../bot/keyboards.js";
 import {
   describeToolCallCompleted,
   describeToolCallStart,
@@ -12,6 +13,7 @@ interface StreamRunOptions {
   bot: Bot<Context>;
   chatId: number;
   run: Run;
+  projectId: string;
   showThinking: boolean;
   debounceMs: number;
 }
@@ -24,7 +26,7 @@ interface AssistantBuffer {
 }
 
 export async function streamRun(opts: StreamRunOptions): Promise<void> {
-  const { bot, chatId, run, showThinking, debounceMs } = opts;
+  const { bot, chatId, run, projectId, showThinking, debounceMs } = opts;
 
   let assistant: AssistantBuffer | undefined;
   const toolMessageIds = new Map<string, number>();
@@ -220,9 +222,16 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
         .join("\n");
       text += `\n\n${lines}`;
     }
-    await bot.api.sendMessage(chatId, text);
+    await bot.api.sendMessage(chatId, text, {
+      reply_markup: afterRunKeyboard(projectId),
+    });
   } catch (err) {
     logger.warn({ err }, "run.wait failed");
+    await bot.api
+      .sendMessage(chatId, "⚠️ Не удалось получить итог run.", {
+        reply_markup: afterRunKeyboard(projectId),
+      })
+      .catch(() => undefined);
   }
 }
 

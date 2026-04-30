@@ -65,8 +65,21 @@ export function chatsKeyboard(
 export function activeChatKeyboard(projectId: string, isRunning: boolean): InlineKeyboard {
   const kb = new InlineKeyboard();
   if (isRunning) kb.text("🛑 Отменить run", CB.CANCEL_RUN).row();
-  kb.text("⬅️ К чатам", `${CB.CHATS}:${projectId}`);
+  kb.text("📋 Чаты", `${CB.CHATS}:${projectId}`)
+    .text("➕ Новый", `${CB.NEW_CHAT}:${projectId}`)
+    .row()
+    .text("📁 Проекты", CB.PROJECTS)
+    .text("🏠 Главное", CB.ROOT);
   return kb;
+}
+
+export function afterRunKeyboard(projectId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📋 Чаты", `${CB.CHATS}:${projectId}`)
+    .text("➕ Новый", `${CB.NEW_CHAT}:${projectId}`)
+    .row()
+    .text("📁 Проекты", CB.PROJECTS)
+    .text("🏠 Главное", CB.ROOT);
 }
 
 function truncate(text: string, max: number): string {

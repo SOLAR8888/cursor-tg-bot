@@ -14,7 +14,8 @@
     "serve": "npm run build && node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "list-agents": "node scripts/list-agents.mjs"
   },
   "dependencies": {
     "@cursor/sdk": "latest",
