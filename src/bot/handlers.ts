@@ -19,6 +19,7 @@ import {
   rootKeyboard,
 } from "./keyboards.js";
 import { loadMcpServers, summarizeMcpEntry } from "../cursor/mcp-loader.js";
+import { bold, code, escapeMdV2 } from "../util/markdown.js";
 import path from "node:path";
 import {
   buildBootstrapPrompt,
@@ -962,6 +963,8 @@ async function handleStatus(
   await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
 }
 
+const TELEGRAM_MAX_TEXT = 4000;
+
 async function sendMcpList(ctx: Context, project: ProjectConfig | undefined): Promise<void> {
   const cwd = project?.cwd ?? process.cwd();
   let entries;
@@ -980,13 +983,38 @@ async function sendMcpList(ctx: Context, project: ProjectConfig | undefined): Pr
     );
     return;
   }
-  const header = project ? `🔌 MCP in *${project.name}*` : "🔌 Global MCP";
+
+  const header = project
+    ? `🔌 MCP in ${bold(project.name)}`
+    : `🔌 ${bold("Global MCP")}`;
   const lines = entries.map((entry) => {
-    const tag = entry.source === "project" ? "[project]" : "[user]";
-    return `${tag} *${entry.name}* — ${summarizeMcpEntry(entry)}`;
+    const tag = entry.source === "project" ? "\\[project\\]" : "\\[user\\]";
+    const dash = escapeMdV2(" — ");
+    return `${tag} ${bold(entry.name)}${dash}${code(summarizeMcpEntry(entry))}`;
   });
-  const text = `${header}\n\n${lines.join("\n")}`;
-  await ctx.reply(text.length > 4000 ? text.slice(0, 4000) + "…" : text, {
-    parse_mode: "Markdown",
-  });
+
+  let body = "";
+  let truncated = false;
+  for (const line of lines) {
+    const projected = header.length + 2 + (body.length ? body.length + 1 : 0) + line.length + 4;
+    if (projected > TELEGRAM_MAX_TEXT) {
+      truncated = true;
+      break;
+    }
+    body += (body ? "\n" : "") + line;
+  }
+  const text = `${header}\n\n${body}` + (truncated ? "\n…" : "");
+
+  try {
+    await ctx.reply(text, { parse_mode: "MarkdownV2" });
+  } catch (err) {
+    logger.warn({ err }, "MCP list MarkdownV2 send failed, falling back to plain text");
+    const plainLines = entries.map((entry) => {
+      const tag = entry.source === "project" ? "[project]" : "[user]";
+      return `${tag} ${entry.name} — ${summarizeMcpEntry(entry)}`;
+    });
+    const plainHeader = project ? `🔌 MCP in ${project.name}` : "🔌 Global MCP";
+    const plain = `${plainHeader}\n\n${plainLines.join("\n")}`;
+    await ctx.reply(plain.length > TELEGRAM_MAX_TEXT ? plain.slice(0, TELEGRAM_MAX_TEXT) + "…" : plain);
+  }
 }
