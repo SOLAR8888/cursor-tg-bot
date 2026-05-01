@@ -141,6 +141,7 @@ The repo ships with `start-bot.cmd` — you can launch it by **double-clicking**
 1. Kills any previous bot instance (e.g. a leftover `tsx watch` zombie or another window).
 2. Waits 2 seconds for the long-poll connection to release.
 3. Runs `npm run serve` in a new console (full production cycle: `tsc` build → `node dist/index.js`).
+4. **Auto-respawns on `/restart`**: when the bot exits and `data/restart-pending.json` is present, the launcher loops back to step 3 instead of pausing. Any other shutdown (Ctrl+C, real crash, manual close) still drops to `pause`.
 
 After Ctrl+C the window stays open with `pause`, so you can read the last logs before it closes.
 
@@ -194,7 +195,7 @@ Sometimes the bot starts answering every request with `ERROR` — usually becaus
 | Mode | What you need |
 | --- | --- |
 | `npm run dev` | Already covered — `tsx watch` respawns automatically. |
-| `start-bot.cmd` | The shipped launcher does **not** auto-restart on `/restart` (it just runs `npm run serve` once). Use `pm2` / `nssm` / a wrapping `while` loop instead, or just relaunch manually. |
+| `start-bot.cmd` | Already covered — the launcher detects the `data/restart-pending.json` marker and re-runs `npm run serve` automatically. Crashes for any other reason still drop to `pause` so you can read the logs. |
 | `npm start` | Wrap with `pm2`, `nssm`, `systemd`, `docker run --restart=always`, etc. |
 | `pm2`        | Default `pm2 start dist/index.js --name cursor-tg-bot` already restarts on exit. |
 | `systemd`    | Set `Restart=always` and `RestartSec=2` in the unit file. |

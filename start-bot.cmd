@@ -18,7 +18,15 @@ echo.
 echo [3/3] Starting bot (npm run serve)...
 echo.
 
+:run
 call npm run serve
+
+if exist "data\restart-pending.json" (
+  echo.
+  echo ===== /restart detected, respawning bot =====
+  echo.
+  goto run
+)
 
 echo.
 echo ===== bot stopped =====
