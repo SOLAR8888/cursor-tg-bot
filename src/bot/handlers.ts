@@ -38,6 +38,7 @@ import {
   mimeFromName,
   saveToInbox,
 } from "./inbox.js";
+import { isRestartInProgress, performGracefulRestart } from "./restart.js";
 
 interface IncomingMessage {
   text: string;
@@ -55,6 +56,7 @@ const HELP_TEXT =
   "  /cancel — cancel the active run\n" +
   "  /status — current run status\n" +
   "  /mcp — MCP servers (global)\n" +
+  "  /restart — restart the bot process (recovers from stuck SDK state)\n" +
   "  /help — this help text\n\n" +
   "To start talking to an agent: pick a project → chat (or \"New chat\") and just send messages.";
 
@@ -116,6 +118,8 @@ export function registerHandlers(
     }
     await sendMcpList(ctx, undefined);
   });
+
+  bot.command("restart", (ctx) => handleRestart(ctx, bot, manager, sessions));
 
   // ---------- CALLBACKS ----------
   bot.callbackQuery(CB.ROOT, async (ctx) => {
@@ -884,6 +888,54 @@ async function handleCancel(
   } catch (err) {
     await ctx.reply("Failed to cancel run: " + manager.describeError(err));
   }
+}
+
+async function handleRestart(
+  ctx: CommandContext<Context>,
+  bot: Bot<Context>,
+  manager: AgentManager,
+  sessions: SessionStore,
+): Promise<void> {
+  if (!ctx.from || !ctx.chat) return;
+
+  if (isRestartInProgress()) {
+    await ctx.reply("🔄 Restart already in progress…");
+    return;
+  }
+
+  const userId = ctx.from.id;
+  const chatId = ctx.chat.id;
+
+  let placeholderMessageId: number | undefined;
+  try {
+    const sent = await ctx.reply(
+      "🔄 *Restarting bot…*\n_All active runs will be aborted. " +
+        "I'll ping you here once I'm back up._",
+      { parse_mode: "Markdown" },
+    );
+    placeholderMessageId = sent.message_id;
+  } catch (err) {
+    logger.warn({ err }, "restart: failed to send placeholder; continuing");
+  }
+
+  logger.info(
+    { userId, chatId, messageId: placeholderMessageId },
+    "restart: requested via /restart",
+  );
+
+  void performGracefulRestart({
+    bot,
+    manager,
+    sessions,
+    request: {
+      userId,
+      chatId,
+      requestedAt: Date.now(),
+      ...(placeholderMessageId !== undefined
+        ? { messageId: placeholderMessageId }
+        : {}),
+    },
+  });
 }
 
 async function handleStatus(

@@ -180,6 +180,28 @@ pm2 save
 
 The bot uses **long-polling** — no inbound ports need to be opened.
 
+## Restarting the bot
+
+Sometimes the bot starts answering every request with `ERROR` — usually because the SDK or its connection to Cursor's backend has gotten stuck. The fastest fix is a full process restart, which the `/restart` command automates from inside Telegram:
+
+1. The bot replies with `🔄 Restarting bot…` and saves who asked + which message to update into `data/restart-pending.json`.
+2. It runs the same shutdown path as `SIGINT` (stop polling → flush sessions → dispose all SDK agents) and exits with code `0`.
+3. Your supervisor respawns the process.
+4. On startup the bot sees the marker file, deletes it, and edits the original message in place to `✅ Bot restarted (Ns)`.
+
+**You need an auto-restart supervisor for this to work** — `/restart` only stops the process; something else has to bring it back up:
+
+| Mode | What you need |
+| --- | --- |
+| `npm run dev` | Already covered — `tsx watch` respawns automatically. |
+| `start-bot.cmd` | The shipped launcher does **not** auto-restart on `/restart` (it just runs `npm run serve` once). Use `pm2` / `nssm` / a wrapping `while` loop instead, or just relaunch manually. |
+| `npm start` | Wrap with `pm2`, `nssm`, `systemd`, `docker run --restart=always`, etc. |
+| `pm2`        | Default `pm2 start dist/index.js --name cursor-tg-bot` already restarts on exit. |
+| `systemd`    | Set `Restart=always` and `RestartSec=2` in the unit file. |
+| `docker`     | Run with `--restart=always` (or `unless-stopped`). |
+
+If no supervisor is configured and you send `/restart`, the bot will simply stop. The marker file in `data/restart-pending.json` will be picked up the next time you start it manually, so you'll still get the `✅ Bot restarted` notification.
+
 ## Usage
 
 After `/start` you'll see the main menu:
@@ -210,6 +232,7 @@ Once you pick (or create) a chat, **any text message** is sent to the agent via 
 | `/cancel` | Cancel the active run |
 | `/status` | Current model, project, agent, run status |
 | `/mcp` | List MCP servers (current project or global) |
+| `/restart` | Restart the bot process — recovers from stuck SDK / network state. **Requires an external supervisor** to actually respawn the process (see [Restarting the bot](#restarting-the-bot)). |
 | `/help` | Help |
 
 ### Attachments
@@ -321,6 +344,7 @@ src/
 │   ├── keyboards.ts        # Inline keyboards for every menu
 │   ├── inbox.ts            # User attachments → agent (photos/files)
 │   ├── outbox.ts           # Watcher data/outbox/<projectId>/ → Telegram
+│   ├── restart.ts          # /restart: persist marker → graceful exit → notify on next boot
 │   └── handlers.ts         # All handlers: commands, callbacks, message:text
 │
 ├── agents/

@@ -19,11 +19,12 @@ export const OUTBOX_ROOT = path.resolve("data", "outbox");
 
 /**
  * Names inside `data/` that must NOT be wiped on startup.
- *  - sessions.json — bot's own persistent session state
- *  - outbox        — wiped separately by `cleanOutboxRoot()`
- *  - inbox         — wiped separately by `cleanInboxRoot()`
- *  - bot.log       — pino file destination opened in logger.ts BEFORE this runs
- *  - hooks-bridge  — reserved for future shell-approval IPC
+ *  - sessions.json         — bot's own persistent session state
+ *  - outbox                — wiped separately by `cleanOutboxRoot()`
+ *  - inbox                 — wiped separately by `cleanInboxRoot()`
+ *  - bot.log               — pino file destination opened in logger.ts BEFORE this runs
+ *  - hooks-bridge          — reserved for future shell-approval IPC
+ *  - restart-pending.json  — marker dropped by `/restart`; consumed once on startup
  */
 const DATA_PRESERVE: ReadonlySet<string> = new Set([
   "sessions.json",
@@ -31,6 +32,7 @@ const DATA_PRESERVE: ReadonlySet<string> = new Set([
   "inbox",
   "bot.log",
   "hooks-bridge",
+  "restart-pending.json",
 ]);
 const POLL_INTERVAL_MS = 1500;
 // File mtime must be older than this before we treat the file as "settled" and
