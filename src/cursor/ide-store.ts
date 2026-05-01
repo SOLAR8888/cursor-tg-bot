@@ -1,6 +1,7 @@
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import Database from "better-sqlite3";
 import { logger } from "../logger.js";
 
 export interface IdeChatInfo {
@@ -8,6 +9,12 @@ export interface IdeChatInfo {
   name: string;
   lastModified: number;
   transcriptPath: string;
+}
+
+interface ComposerHeader {
+  name?: string;
+  lastUpdatedAt?: number;
+  isArchived?: boolean;
 }
 
 export interface TranscriptEntry {
@@ -109,6 +116,97 @@ async function readFirstUserText(transcriptPath: string): Promise<string | undef
   return undefined;
 }
 
+/**
+ * Path to Cursor's per-user globalStorage SQLite DB. The "Cursor Agents" panel
+ * in IDE renders chats from this file (key: `composer.composerHeaders`).
+ *
+ * Allows override via `CURSOR_USER_DATA_DIR` for non-standard installs.
+ */
+function cursorStateDbPath(): string {
+  const override = process.env.CURSOR_USER_DATA_DIR;
+  if (override && override.trim() !== "") {
+    return path.join(override, "User", "globalStorage", "state.vscdb");
+  }
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA ?? path.join(home, "AppData", "Roaming");
+    return path.join(appdata, "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  if (process.platform === "darwin") {
+    return path.join(
+      home,
+      "Library",
+      "Application Support",
+      "Cursor",
+      "User",
+      "globalStorage",
+      "state.vscdb",
+    );
+  }
+  return path.join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+}
+
+function isSameWorkspacePath(a: string, b: string): boolean {
+  const na = path.resolve(a);
+  const nb = path.resolve(b);
+  if (process.platform === "win32") {
+    return na.toLowerCase() === nb.toLowerCase();
+  }
+  return na === nb;
+}
+
+/**
+ * Read `composer.composerHeaders` from Cursor's state.vscdb and return a map
+ * `composerId -> header` for the given workspace cwd.
+ *
+ * Returns `undefined` if the DB is unavailable or unreadable — callers must
+ * fall back to disk-only enumeration so the bot keeps working without IDE.
+ */
+function loadComposerHeadersForCwd(cwd: string): Map<string, ComposerHeader> | undefined {
+  const dbPath = cursorStateDbPath();
+  let db: Database.Database | undefined;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const row = db
+      .prepare("SELECT value FROM ItemTable WHERE key = 'composer.composerHeaders'")
+      .get() as { value?: string } | undefined;
+    const raw = row?.value;
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { allComposers?: unknown };
+    const list = parsed.allComposers;
+    if (!Array.isArray(list)) return undefined;
+
+    const map = new Map<string, ComposerHeader>();
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+      const composerId = obj.composerId;
+      if (typeof composerId !== "string" || composerId.length === 0) continue;
+
+      const ws = obj.workspaceIdentifier as
+        | { uri?: { fsPath?: unknown } }
+        | undefined;
+      const fsPath = ws?.uri?.fsPath;
+      if (typeof fsPath !== "string" || !isSameWorkspacePath(fsPath, cwd)) continue;
+
+      const header: ComposerHeader = {};
+      if (typeof obj.name === "string") header.name = obj.name;
+      if (typeof obj.lastUpdatedAt === "number") header.lastUpdatedAt = obj.lastUpdatedAt;
+      if (typeof obj.isArchived === "boolean") header.isArchived = obj.isArchived;
+      map.set(composerId, header);
+    }
+    return map;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      logger.warn({ err, dbPath }, "failed to read Cursor composerHeaders");
+    }
+    return undefined;
+  } finally {
+    db?.close();
+  }
+}
+
 export async function listIdeChats(cwd: string): Promise<IdeChatInfo[]> {
   const dir = ideTranscriptsDir(cwd);
   let entries;
@@ -122,19 +220,38 @@ export async function listIdeChats(cwd: string): Promise<IdeChatInfo[]> {
     return [];
   }
 
+  // May be undefined if Cursor IDE isn't installed or the DB can't be read —
+  // in that case we keep the old behaviour (show every transcript on disk,
+  // build name from the first user message).
+  const headers = loadComposerHeadersForCwd(cwd);
+
   const out: IdeChatInfo[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith("agent-")) continue;
 
+    const header = headers?.get(entry.name);
+    if (header?.isArchived === true) continue;
+
     const transcriptPath = path.join(dir, entry.name, `${entry.name}.jsonl`);
     try {
       const stats = await stat(transcriptPath);
-      const firstUser = await readFirstUserText(transcriptPath);
+
+      const headerName = header?.name?.trim();
+      const name =
+        headerName && headerName.length > 0
+          ? deriveIdeChatName(headerName)
+          : deriveIdeChatName((await readFirstUserText(transcriptPath)) ?? entry.name);
+
+      const lastModified =
+        header?.lastUpdatedAt && header.lastUpdatedAt > 0
+          ? header.lastUpdatedAt
+          : stats.mtimeMs;
+
       out.push({
         id: entry.name,
-        name: deriveIdeChatName(firstUser ?? entry.name),
-        lastModified: stats.mtimeMs,
+        name,
+        lastModified,
         transcriptPath,
       });
     } catch (err) {
