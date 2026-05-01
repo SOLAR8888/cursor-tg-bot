@@ -64,6 +64,16 @@ export function projectsKeyboard(projects: readonly ProjectConfig[]): InlineKeyb
   return kb;
 }
 
+export function mcpListKeyboard(projectId: string | undefined): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (projectId) {
+    kb.text("⬅️ To project", `${CB.PROJECT}:${projectId}`);
+  } else {
+    kb.text("⬅️ Main menu", CB.ROOT);
+  }
+  return kb;
+}
+
 export function projectKeyboard(projectId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text("💬 Chats", `${CB.CHATS}:${projectId}`)
