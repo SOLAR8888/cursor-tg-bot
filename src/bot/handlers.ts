@@ -20,6 +20,7 @@ import {
 } from "./keyboards.js";
 import { loadMcpServers, summarizeMcpEntry } from "../cursor/mcp-loader.js";
 import { bold, code, escapeMdV2 } from "../util/markdown.js";
+import { safeEditMessageText } from "../util/telegram.js";
 import path from "node:path";
 import {
   buildBootstrapPrompt,
@@ -125,19 +126,19 @@ export function registerHandlers(
   // ---------- CALLBACKS ----------
   bot.callbackQuery(CB.ROOT, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Main menu:", { reply_markup: rootKeyboard() });
+    await safeEditMessageText(ctx, "Main menu:", { reply_markup: rootKeyboard() });
   });
 
   bot.callbackQuery(CB.PROJECTS, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Pick a project:", {
+    await safeEditMessageText(ctx, "Pick a project:", {
       reply_markup: projectsKeyboard(config.projects),
     });
   });
 
   bot.callbackQuery(CB.HELP, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(HELP_TEXT, { reply_markup: rootKeyboard() });
+    await safeEditMessageText(ctx, HELP_TEXT, { reply_markup: rootKeyboard() });
   });
 
   bot.callbackQuery(/^project:(.+)$/, async (ctx) => {
@@ -157,7 +158,7 @@ export function registerHandlers(
       awaitingText: undefined,
     });
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(formatProjectInfo(project), {
+    await safeEditMessageText(ctx, formatProjectInfo(project), {
       reply_markup: projectKeyboard(project.id),
     });
   });
@@ -772,7 +773,7 @@ async function sendChatsList(
   const { edit = false, manageMode = false } = options;
   const project = manager.getProject(projectId);
   if (!project) {
-    if (edit) await ctx.editMessageText("Project not found.");
+    if (edit) await safeEditMessageText(ctx, "Project not found.");
     else await ctx.reply("Project not found.");
     return;
   }
@@ -802,7 +803,7 @@ async function sendChatsList(
     parse_mode: "Markdown" as const,
     reply_markup: chatsKeyboard(projectId, sdkAgents, ideChats, { manageMode }),
   };
-  if (edit) await ctx.editMessageText(header, opts);
+  if (edit) await safeEditMessageText(ctx, header, opts);
   else await ctx.reply(header, opts);
 }
 
