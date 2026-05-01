@@ -10,6 +10,7 @@ if (process.platform === "win32") {
   wca.default({ inject: "+" });
 }
 
+import type { Bot, Context } from "grammy";
 import { GrammyError } from "grammy";
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
@@ -19,6 +20,10 @@ import { SessionStore } from "./bot/session.js";
 import { recoverActiveRuns } from "./agents/recovery.js";
 import { cleanOutboxRoot, cleanStaleDataDir } from "./bot/outbox.js";
 import { cleanInboxRoot } from "./bot/inbox.js";
+import {
+  consumePendingRestart,
+  type PendingRestart,
+} from "./bot/restart.js";
 
 const RUNTIME_ERROR_RETRY_MS = 2000;
 
@@ -68,6 +73,33 @@ process.on("uncaughtException", (err) => {
   logger.error({ err }, "uncaught exception");
 });
 
+async function notifyRestartCompleted(
+  bot: Bot<Context>,
+  pending: PendingRestart,
+): Promise<void> {
+  const elapsedMs = Date.now() - pending.requestedAt;
+  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+  const text = `✅ *Bot restarted* (${seconds}s)\n_You can keep chatting._`;
+  if (pending.messageId !== undefined) {
+    try {
+      await bot.api.editMessageText(
+        pending.chatId,
+        pending.messageId,
+        text,
+        { parse_mode: "Markdown" },
+      );
+      return;
+    } catch (err) {
+      logger.warn({ err }, "restart: editMessageText failed; falling back to send");
+    }
+  }
+  try {
+    await bot.api.sendMessage(pending.chatId, text, { parse_mode: "Markdown" });
+  } catch (err) {
+    logger.warn({ err, chatId: pending.chatId }, "restart: sendMessage failed");
+  }
+}
+
 async function main(): Promise<void> {
   const config = await loadConfig();
   logger.info(
@@ -78,6 +110,15 @@ async function main(): Promise<void> {
     },
     "starting cursor-tg-bot",
   );
+
+  // Read the restart marker BEFORE cleanStaleDataDir() wipes it.
+  const pendingRestart = await consumePendingRestart();
+  if (pendingRestart) {
+    logger.info(
+      { userId: pendingRestart.userId, chatId: pendingRestart.chatId },
+      "restart: detected pending restart from previous process",
+    );
+  }
 
   await cleanStaleDataDir();
   await cleanOutboxRoot();
@@ -127,6 +168,9 @@ async function main(): Promise<void> {
         drop_pending_updates: true,
         onStart: (info) => {
           logger.info({ username: info.username }, "telegram bot started");
+          if (pendingRestart) {
+            void notifyRestartCompleted(bot, pendingRestart);
+          }
           void recoverActiveRuns(bot, agentManager, sessions);
         },
       });
