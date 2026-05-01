@@ -13,6 +13,7 @@ import {
   chatsKeyboard,
   deleteConfirmKeyboard,
   ideChatKeyboard,
+  mcpListKeyboard,
   projectKeyboard,
   projectsKeyboard,
   restoreSdkAgentId,
@@ -114,11 +115,11 @@ export function registerHandlers(
     if (session.selectedProjectId) {
       const project = manager.getProject(session.selectedProjectId);
       if (project) {
-        await sendMcpList(ctx, project);
+        await sendMcpList(ctx, project, { edit: false });
         return;
       }
     }
-    await sendMcpList(ctx, undefined);
+    await sendMcpList(ctx, undefined, { edit: false });
   });
 
   bot.command("restart", (ctx) => handleRestart(ctx, bot, manager, sessions));
@@ -378,12 +379,12 @@ export function registerHandlers(
     if (!projectId) return;
     await ctx.answerCallbackQuery();
     if (projectId === "_global") {
-      await sendMcpList(ctx, undefined);
+      await sendMcpList(ctx, undefined, { edit: true });
       return;
     }
     const project = manager.getProject(projectId);
     if (!project) return;
-    await sendMcpList(ctx, project);
+    await sendMcpList(ctx, project, { edit: true });
   });
 
   bot.callbackQuery(CB.CANCEL_RUN, (ctx) => handleCancel(ctx, manager, sessions));
@@ -966,18 +967,33 @@ async function handleStatus(
 
 const TELEGRAM_MAX_TEXT = 4000;
 
-async function sendMcpList(ctx: Context, project: ProjectConfig | undefined): Promise<void> {
+async function sendMcpList(
+  ctx: Context,
+  project: ProjectConfig | undefined,
+  options: { edit?: boolean } = {},
+): Promise<void> {
+  const { edit = false } = options;
+  const replyMarkup = mcpListKeyboard(project?.id);
+  const send = async (
+    text: string,
+    extra: { parse_mode?: "MarkdownV2" } = {},
+  ): Promise<void> => {
+    const opts = { reply_markup: replyMarkup, ...extra } as const;
+    if (edit) await safeEditMessageText(ctx, text, opts);
+    else await ctx.reply(text, opts);
+  };
+
   const cwd = project?.cwd ?? process.cwd();
   let entries;
   try {
     entries = await loadMcpServers(cwd);
   } catch (err) {
     logger.error({ err }, "loadMcpServers failed");
-    await ctx.reply("Failed to read MCP servers.");
+    await send("Failed to read MCP servers.");
     return;
   }
   if (entries.length === 0) {
-    await ctx.reply(
+    await send(
       project
         ? `No MCP servers found for "${project.name}".`
         : "No global MCP servers found (~/.cursor/mcp.json).",
@@ -1007,7 +1023,7 @@ async function sendMcpList(ctx: Context, project: ProjectConfig | undefined): Pr
   const text = `${header}\n\n${body}` + (truncated ? "\n…" : "");
 
   try {
-    await ctx.reply(text, { parse_mode: "MarkdownV2" });
+    await send(text, { parse_mode: "MarkdownV2" });
   } catch (err) {
     logger.warn({ err }, "MCP list MarkdownV2 send failed, falling back to plain text");
     const plainLines = entries.map((entry) => {
@@ -1016,6 +1032,8 @@ async function sendMcpList(ctx: Context, project: ProjectConfig | undefined): Pr
     });
     const plainHeader = project ? `🔌 MCP in ${project.name}` : "🔌 Global MCP";
     const plain = `${plainHeader}\n\n${plainLines.join("\n")}`;
-    await ctx.reply(plain.length > TELEGRAM_MAX_TEXT ? plain.slice(0, TELEGRAM_MAX_TEXT) + "…" : plain);
+    await send(
+      plain.length > TELEGRAM_MAX_TEXT ? plain.slice(0, TELEGRAM_MAX_TEXT) + "…" : plain,
+    );
   }
 }
