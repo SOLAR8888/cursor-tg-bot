@@ -452,7 +452,7 @@ export class AgentManager {
   describeError(err: unknown): string {
     if (err instanceof CursorAgentError) {
       const code = err.code ? ` (${err.code})` : "";
-      const retry = err.isRetryable ? " — можно повторить" : "";
+      const retry = err.isRetryable ? " — retryable" : "";
       return `Cursor SDK error${code}: ${err.message}${retry}`;
     }
     if (err instanceof Error) return err.message;

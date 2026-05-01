@@ -174,7 +174,7 @@ export function startOutboxWatcher(opts: OutboxOptions): OutboxHandle {
       } else {
         await bot.api.sendMessage(
           chatId,
-          `⚠️ Файл ${name} слишком большой для Telegram (${formatSize(size)} > 50 MB).`,
+          `⚠️ File ${name} is too large for Telegram (${formatSize(size)} > 50 MB).`,
         );
         // The file is unsendable as-is — mark as terminally failed so we
         // don't keep retrying it every poll.
@@ -189,7 +189,7 @@ export function startOutboxWatcher(opts: OutboxOptions): OutboxHandle {
       await bot.api
         .sendMessage(
           chatId,
-          `⚠️ Не удалось отправить файл ${name}: ${(err as Error).message}`,
+          `⚠️ Failed to send file ${name}: ${(err as Error).message}`,
         )
         .catch(() => undefined);
     }
@@ -290,12 +290,12 @@ function formatSize(bytes: number): string {
 export function buildOutboxInstruction(absoluteOutboxDir: string): string {
   return [
     "[Telegram bridge]",
-    "Чтобы прислать пользователю файл, скриншот или картинку через Telegram —",
-    `сохрани файл по абсолютному пути \`${absoluteOutboxDir}\` (имя/расширение любые;`,
-    "директория уже создана и принадлежит боту, не проекту).",
-    "Бот сам отправит файл в чат и удалит его из этой папки.",
-    "Изображения (.png/.jpg/.webp/.gif) уйдут как фото, остальное — как документ.",
-    "По желанию рядом можно положить `<имя>.<ext>.caption.txt` — содержимое станет подписью.",
-    "Не делай этого без явной просьбы пользователя.",
+    "To send the user a file, screenshot or image via Telegram —",
+    `save the file at the absolute path \`${absoluteOutboxDir}\` (any name/extension;`,
+    "the directory already exists and belongs to the bot, not the project).",
+    "The bot will forward the file to the chat and delete it from this folder.",
+    "Images (.png/.jpg/.webp/.gif) are sent as photos, everything else as a document.",
+    "Optionally place a sibling `<name>.<ext>.caption.txt` — its content becomes the caption.",
+    "Don't do this unless the user explicitly asks.",
   ].join(" ");
 }

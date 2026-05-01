@@ -3,6 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "description": "Telegram bot for managing Cursor IDE agents across multiple local projects",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SOLAR8888/cursor-tg-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SOLAR8888/cursor-tg-bot/issues"
+  },
+  "homepage": "https://github.com/SOLAR8888/cursor-tg-bot#readme",
+  "keywords": [
+    "cursor",
+    "cursor-sdk",
+    "telegram",
+    "telegram-bot",
+    "ai-agent",
+    "grammy"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20"

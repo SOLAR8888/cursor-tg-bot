@@ -71,7 +71,7 @@ async function recoverOneRun(
   await bot.api
     .sendMessage(
       userId,
-      "🔄 Бот перезапускался во время вашего run. Жду его завершения…",
+      "🔄 The bot restarted during your run. Waiting for it to finish…",
     )
     .catch(() => undefined);
 
@@ -109,8 +109,8 @@ async function recoverOneRun(
     await bot.api
       .sendMessage(
         userId,
-        "⚠️ Run всё ещё активен спустя 5 минут после рестарта. " +
-          "Напишите любое сообщение в этот чат — бот автоматически прервёт залипший run и запустит новый.",
+        "⚠️ Run is still active 5 minutes after restart. " +
+          "Send any message in this chat — the bot will automatically abort the stuck run and start a new one.",
         { reply_markup: afterRunKeyboard(projectId) },
       )
       .catch(() => undefined);
@@ -120,7 +120,7 @@ async function recoverOneRun(
   const text =
     result.result && result.result.trim().length > 0
       ? result.result
-      : `Run завершён со статусом ${result.status}.`;
+      : `Run finished with status ${result.status}.`;
   const parts = chunkText(text);
   const lastIdx = parts.length - 1;
   for (let i = 0; i < parts.length; i++) {

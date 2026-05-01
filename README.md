@@ -1,99 +1,114 @@
 # cursor-tg-bot
 
-Telegram-бот для управления **локальными** Cursor-агентами в нескольких проектах из одного клиента (Telegram). Использует [`@cursor/sdk`](https://cursor.com/ru/docs/sdk/typescript) и работает с теми же агентами, что и Cursor IDE / Web.
+> Telegram bot for managing **local** [Cursor](https://cursor.com) agents across multiple projects from a single chat client.
 
-> **Статус:** v0.1 — рабочий MVP. См. раздел [Roadmap](#roadmap).
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](./LICENSE)
+[![Cursor SDK](https://img.shields.io/badge/Cursor%20SDK-typescript-black)](https://cursor.com/docs/sdk/typescript)
 
-## Содержание
+`cursor-tg-bot` runs [`@cursor/sdk`](https://cursor.com/docs/sdk/typescript) in `runtime: "local"` mode and exposes a Telegram interface to the same agents you'd use inside Cursor IDE / Web. Manage chats in any of your projects from your phone, while heavy work runs on your dev machine.
 
-- [Возможности](#возможности)
-- [Как это устроено](#как-это-устроено)
-- [Требования](#требования)
-- [Установка](#установка)
-- [Конфигурация](#конфигурация)
-- [Запуск](#запуск)
-- [UX / команды](#ux--команды)
-- [Безопасность](#безопасность)
-- [MCP-серверы](#mcp-серверы)
-- [Файлы и скриншоты от агента](#файлы-и-скриншоты-от-агента)
-- [Архитектура](#архитектура)
-- [Известные ограничения](#известные-ограничения)
+> **Status:** v0.1 — working MVP. See [Roadmap](#roadmap).
+
+---
+
+## Table of contents
+
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Running the bot](#running-the-bot)
+- [Usage](#usage)
+- [Sending files & screenshots](#sending-files--screenshots)
+- [MCP servers](#mcp-servers)
+- [IDE chats inside the bot](#ide-chats-inside-the-bot)
+- [Security](#security)
+- [Architecture](#architecture)
+- [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Возможности
+---
 
-- Один Telegram-клиент для **множества проектов** в разных директориях.
-- Меню с фиксированным списком проектов (через `projects.json`).
-- Создание новых SDK-агентов в любом проекте, общение с ними прямо из Telegram.
-- Возобновление существующих SDK-агентов и продолжение диалогов.
-- Стриминг ответов агента в реальном времени (с debounced-редактированием сообщений).
-- Видимость вызовов инструментов (read/edit/shell/grep/...) в виде компактных уведомлений.
-- Передача файлов/скриншотов **из агента в Telegram** через outbox-папку рядом с ботом ([подробнее](#файлы-и-скриншоты-от-агента)).
-- Просмотр MCP-серверов: глобальных (`~/.cursor/mcp.json`) и проектных (`<cwd>/.cursor/mcp.json`).
-- Использование тех же MCP-серверов, что и Cursor IDE — никакого дублирования.
-- Whitelist-авторизация по Telegram User ID. Все остальные **молча игнорируются**.
-- Отмена выполняемого run, статус, graceful-shutdown.
+## Features
 
-## Как это устроено
+- One Telegram client for **multiple projects** in different directories.
+- Menu with a fixed list of projects (driven by `projects.json`).
+- Create new SDK agents in any project and chat with them from Telegram.
+- Resume existing SDK agents and continue past conversations.
+- **Real-time streaming** of agent responses (debounced message edits).
+- Visibility into tool calls (`read`/`edit`/`shell`/`grep`/...) as compact notifications.
+- File and screenshot delivery **from the agent into Telegram** via a per-project outbox folder ([details](#sending-files--screenshots)).
+- Two-way attachments: send photos, documents and voice messages **into the agent**.
+- Inspect MCP servers: global (`~/.cursor/mcp.json`) and project (`<cwd>/.cursor/mcp.json`).
+- Reuses the **same** MCP servers as Cursor IDE — no duplication.
+- Whitelist authorisation by Telegram User ID. Everyone else is **silently ignored**.
+- Cancel running runs, view status, graceful shutdown.
 
-Бот использует `@cursor/sdk` в режиме `runtime: "local"`. Это означает:
+## How it works
 
-1. Бот должен быть запущен **на той же машине**, где находятся ваши проекты (для Windows: где работает Cursor IDE).
-2. Один и тот же `CURSOR_API_KEY` оплачивает запросы — точно так же, как при работе из IDE.
-3. Созданные через бота агенты **видны в Cursor IDE / Web** с фильтром `Filter > Source > SDK`. Можно начать чат в Telegram и продолжить в IDE (и наоборот, если возьмёте `agentId` из IDE).
-4. Конфигурация (MCP, hooks, sub-agents) автоматически подхватывается из `~/.cursor/` и `<project>/.cursor/`, потому что бот вызывает SDK с `local.settingSources: ["user", "project"]`.
+The bot uses `@cursor/sdk` in `runtime: "local"` mode. That means:
 
-> **Важно:** SDK не предоставляет публичного API для чтения чатов, начатых **вручную в Cursor IDE** (через UI). Бот видит только тех агентов, которые он создал сам. Чтение чатов IDE напрямую через её SQLite-базу — запланировано на следующую итерацию (см. [Roadmap](#roadmap)).
+1. The bot runs **on the same machine** that hosts your projects (on Windows: where your Cursor IDE lives).
+2. The same `CURSOR_API_KEY` pays for the requests — exactly like running them from the IDE.
+3. Agents created via the bot are **visible in Cursor IDE / Web** under `Filter > Source > SDK`. You can start a chat in Telegram and continue it in the IDE (and vice versa, if you grab the `agentId` from the IDE).
+4. Configuration (MCP, hooks, sub-agents) is automatically inherited from `~/.cursor/` and `<project>/.cursor/`, because the SDK is invoked with `local.settingSources: ["user", "project"]`.
 
-## Требования
+> **Note:** the SDK does not expose a public API for chats started **manually inside Cursor IDE** (through the UI). The bot only sees agents it created itself — except for read-only access to IDE transcripts, see [IDE chats inside the bot](#ide-chats-inside-the-bot).
 
-- **Node.js** ≥ 20 (рекомендуется 22+).
-- **npm** ≥ 10 (или замените на pnpm/yarn — не зависит).
-- **Cursor API key** — [cursor.com/dashboard/integrations](https://cursor.com/dashboard/integrations) → *Create new API key*.
-- **Telegram Bot Token** — у [@BotFather](https://t.me/BotFather) команда `/newbot`.
-- **Свой Telegram User ID** — у [@userinfobot](https://t.me/userinfobot).
-- **Доступ к проектам по абсолютным путям** — бот будет вызывать SDK с этими `cwd`.
+## Requirements
 
-## Установка
+- **Node.js** ≥ 20 (22+ recommended).
+- **npm** ≥ 10 (or pnpm/yarn — no lock-in).
+- **Cursor API key** — get one at [cursor.com/dashboard/integrations](https://cursor.com/dashboard/integrations) → *Create new API key*.
+- **Telegram Bot Token** — talk to [@BotFather](https://t.me/BotFather), command `/newbot`.
+- **Your Telegram User ID** — get it from [@userinfobot](https://t.me/userinfobot).
+- **Absolute paths to your projects** — the bot invokes the SDK with each project's `cwd`.
+
+## Installation
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/SOLAR8888/cursor-tg-bot.git
 cd cursor-tg-bot
 npm install
 ```
 
-## Конфигурация
+## Configuration
 
-### 1. Переменные окружения
+### 1. Environment variables
 
-Скопируйте `.env.example` в `.env` и заполните:
+Copy `.env.example` to `.env` and fill it in:
 
 ```bash
 cp .env.example .env
 ```
 
-| Переменная | Обязательно | Описание |
+| Variable | Required | Description |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | да | Токен от @BotFather |
-| `ALLOWED_USER_IDS` | да | CSV с Telegram User ID, например `123456789,987654321` |
-| `CURSOR_API_KEY` | да | API-ключ Cursor |
-| `DEFAULT_MODEL_ID` | нет | По умолчанию `claude-opus-4-7` (Opus 4.7) |
-| `DEFAULT_MODEL_PARAMS` | нет | По умолчанию `thinking=max` (Max Mode). Формат: `key=value,key=value` |
-| `SHOW_THINKING` | нет | `true` — стримить «размышления» в Telegram. По умолчанию `false` |
-| `STREAM_EDIT_DEBOUNCE_MS` | нет | Дебаунс редактирования стриминговых сообщений. По умолчанию `900` |
-| `LOG_LEVEL` | нет | `debug` / `info` / `warn` / `error`. По умолчанию `info` |
-| `LOG_MESSAGES` | нет | `true` — писать содержимое сообщений в лог (для дебага). По умолчанию `false` |
+| `TELEGRAM_BOT_TOKEN` | yes | Token from @BotFather |
+| `ALLOWED_USER_IDS` | yes | CSV of allowed Telegram user IDs, e.g. `123456789,987654321` |
+| `CURSOR_API_KEY` | yes | Cursor API key |
+| `DEFAULT_MODEL_ID` | no | Defaults to `claude-opus-4-7` (Opus 4.7) |
+| `DEFAULT_MODEL_PARAMS` | no | Defaults to `thinking=max` (Max Mode). Format: `key=value,key=value` |
+| `SHOW_THINKING` | no | `true` to stream "thinking" blocks to Telegram. Default `false` |
+| `STREAM_EDIT_DEBOUNCE_MS` | no | Debounce for editing streaming messages. Default `900` |
+| `LOG_LEVEL` | no | `debug` / `info` / `warn` / `error`. Default `info` |
+| `LOG_MESSAGES` | no | `true` to log message contents (debug only). Default `false` |
 
-> Точный `DEFAULT_MODEL_ID` зависит от вашего Cursor-аккаунта. Проверьте список:
+> The exact `DEFAULT_MODEL_ID` depends on your Cursor account. List the available models with:
 >
 > ```bash
 > node --input-type=module -e "import('@cursor/sdk').then(s=>s.Cursor.models.list({apiKey:process.env.CURSOR_API_KEY}).then(m=>console.log(m.map(x=>x.id))))"
 > ```
 
-### 2. Список проектов
+### 2. Project list
 
-Скопируйте `projects.json.example` в `projects.json` и отредактируйте:
+Copy `projects.json.example` to `projects.json` and edit it:
 
 ```json
 {
@@ -108,47 +123,47 @@ cp .env.example .env
 }
 ```
 
-| Поле | Обязательно | Описание |
+| Field | Required | Description |
 | --- | --- | --- |
-| `id` | да | Стабильный ID, попадает в callback_data Telegram. Только `[A-Za-z0-9_-]` |
-| `name` | да | Отображаемое имя в меню |
-| `cwd` | да | **Абсолютный** путь к корню проекта. На Windows экранируйте `\\` |
-| `description` | нет | Текстовое описание, показывается на странице проекта |
+| `id` | yes | Stable identifier used in Telegram callback_data. Only `[A-Za-z0-9_-]` |
+| `name` | yes | Display name shown in the menu |
+| `cwd` | yes | **Absolute** path to the project root. On Windows escape `\\` |
+| `description` | no | Free-form text shown on the project page |
 
-Файл `projects.json` **не коммитится** в git (он в `.gitignore`) — в нём могут быть локальные пути.
+`projects.json` is **not committed** to git (it's in `.gitignore`) — it can contain local paths.
 
-## Запуск
+## Running the bot
 
-### Двойной клик (Windows)
+### Double-click launcher (Windows)
 
-В корне репо лежит `start-bot.cmd` — его можно запустить **двойным кликом** в проводнике. Скрипт:
+The repo ships with `start-bot.cmd` — you can launch it by **double-clicking** in Explorer. The script:
 
-1. Убивает предыдущий процесс бота (если был запущен — например, из другого окна или `tsx watch` оставил «зомби»).
-2. Ждёт 2 секунды для корректного освобождения long-poll.
-3. Запускает `npm run serve` в открывшемся cmd-окне с логами (полный production-цикл: `tsc` build → `node dist/index.js`).
+1. Kills any previous bot instance (e.g. a leftover `tsx watch` zombie or another window).
+2. Waits 2 seconds for the long-poll connection to release.
+3. Runs `npm run serve` in a new console (full production cycle: `tsc` build → `node dist/index.js`).
 
-После закрытия (Ctrl+C) окно остаётся открытым с `pause`, чтобы можно было прочитать последние логи.
+After Ctrl+C the window stays open with `pause`, so you can read the last logs before it closes.
 
-Если правите код — нужно перезапустить (двойной клик заново). Если хотите hot-reload во время разработки — используйте `npm run dev` из консоли.
+If you change code, restart with another double-click. For hot-reload during development, use `npm run dev` from a terminal instead.
 
-Для kill-логики используется `scripts/kill-bot.ps1` — отдельный PowerShell-скрипт, который ищет node-процессы с командной строкой содержащей `cursor-tg-bot`, `tsx ... src/index.ts` или `dist/index.js` и `Stop-Process -Force` их.
+The kill logic lives in `scripts/kill-bot.ps1` — a small PowerShell script that finds Node processes whose command line contains `cursor-tg-bot`, `tsx ... src/index.ts` or `dist/index.js` and runs `Stop-Process -Force` on them.
 
-### Dev (с hot-reload)
+### Dev (hot-reload)
 
 ```bash
 npm run dev
 ```
 
-### Prod
+### Production
 
 ```bash
 npm run build
 npm start
 ```
 
-### Сервис
+### Run as a service
 
-#### Windows (NSSM или Task Scheduler)
+#### Windows (NSSM or Task Scheduler)
 
 ```powershell
 nssm install cursor-tg-bot "C:\Program Files\nodejs\node.exe" "C:\path\to\cursor-tg-bot\dist\index.js"
@@ -163,315 +178,324 @@ pm2 start dist/index.js --name cursor-tg-bot
 pm2 save
 ```
 
-Бот использует **long-polling**, никаких портов открывать не нужно.
+The bot uses **long-polling** — no inbound ports need to be opened.
 
-## UX / команды
+## Usage
 
-После `/start` появится меню:
+After `/start` you'll see the main menu:
 
 ```
-Главное меню
-├── 📁 Проекты ▶
-│   └── <Проект>
-│       ├── 💬 Чаты ▶
-│       │   ├── <живые SDK-агенты этого проекта>
-│       │   └── ➕ Новый чат
-│       ├── 🔌 MCP проекта
-│       └── ⬅️ К проектам
-├── 🔌 MCP (глобальные)
-└── ℹ️ Помощь
+Main menu
+├── 📁 Projects ▶
+│   └── <Project>
+│       ├── 💬 Chats ▶
+│       │   ├── <live SDK agents in this project>
+│       │   └── ➕ New chat
+│       ├── 🔌 Project MCP
+│       └── ⬅️ Projects
+├── 🔌 MCP (global)
+└── ℹ️ Help
 ```
 
-После выбора чата (или создания нового) **любое текстовое сообщение** уходит агенту через `agent.send()`. Стрим ответа приходит в Telegram: ассистентский текст редактируется на месте, вызовы инструментов появляются отдельными сообщениями.
+Once you pick (or create) a chat, **any text message** is sent to the agent via `agent.send()`. The streaming response arrives in Telegram: assistant text is edited in place, tool calls show up as separate messages.
 
-| Команда | Что делает |
+### Commands
+
+| Command | Description |
 | --- | --- |
-| `/start` | Сбросить сессию, главное меню |
-| `/projects` | Меню проектов |
-| `/chats` | Чаты текущего проекта |
-| `/new` | Подсказка «отправьте первое сообщение нового чата» |
-| `/cancel` | Отменить активный run |
-| `/status` | Текущая модель, проект, агент, статус run |
-| `/mcp` | Список MCP-серверов (текущего проекта или глобальных) |
-| `/help` | Справка |
+| `/start` | Reset the session, open the main menu |
+| `/projects` | Project menu |
+| `/chats` | Chats in the current project |
+| `/new` | Hint "send the first message of a new chat" |
+| `/cancel` | Cancel the active run |
+| `/status` | Current model, project, agent, run status |
+| `/mcp` | List MCP servers (current project or global) |
+| `/help` | Help |
 
-## Безопасность
+### Attachments
 
-В этой версии используется **минимальный** уровень — whitelist по Telegram User ID. Это достаточно для одного пользователя на личной машине. Если планируете давать доступ другим — см. [Roadmap](#roadmap), там запланированы pairing-токены и аудит-лог.
+The bot accepts photos, documents, voice/audio and (when the file is small enough) inlines them into the prompt. Larger files are saved to a per-project inbox folder and the agent receives the absolute path.
 
-### Что обеспечивает текущая реализация
+## Sending files & screenshots
 
-1. **Whitelist первым в цепочке middleware**. Любой update от пользователя без ID в `ALLOWED_USER_IDS` молча отбрасывается (`return` без ответа). Бот не отвечает, не показывает существование, только пишет `warn` в лог. Это лучше, чем «доступ запрещён», потому что не палит факт работающего бота.
-2. **Никаких вебхуков** — long-polling, наружу порты не открыты.
-3. **Логи редактируются**: `TELEGRAM_BOT_TOKEN`, `CURSOR_API_KEY`, `Authorization` headers замаскированы (см. `src/logger.ts`).
-4. **`.env`, `projects.json`, `data/`** — в `.gitignore`. Токены и пути не утекают в git.
-5. **Содержимое сообщений** не пишется в лог по умолчанию — только метаданные (user_id, project_id, agent_id). Для дебага есть `LOG_MESSAGES=true`.
+Cursor agents can send you **screenshots, images and arbitrary files** in Telegram via an "outbox" folder.
 
-### Дополнительные шаги, рекомендуемые вручную
+### How it works
 
-1. **Сделайте бота приватным** в @BotFather:
+1. Outbox folders live **next to the bot**, not inside your projects: `<botCwd>/data/outbox/<projectId>/`. This way other projects stay clean — no need to add anything to their `.gitignore`.
+2. **On every bot start** the entire `data/outbox/` is wiped and recreated. No stale leftovers from previous sessions.
+3. While a run is active, the bot watches the project's outbox folder.
+4. Any new file the agent saves there (using the absolute path) is **automatically forwarded to the Telegram chat** that owns the run, then **deleted** from the outbox.
+5. The bot picks the delivery method by extension:
+   - `.png/.jpg/.jpeg/.webp/.gif/.bmp` (≤ 10 MB) → as **photo** (`sendPhoto`).
+   - everything else (≤ 50 MB) → as **document** (`sendDocument`).
+6. Optionally, place a `<name>.<ext>.caption.txt` next to the file — its content becomes the Telegram caption (up to 1024 chars).
+
+### How to use it
+
+Just ask the agent in chat:
+
+> "Take a screenshot of the current page and send it to me on Telegram"
+>
+> "Download this image and send it here: https://..."
+>
+> "Generate a PNG diagram of components and send it to the chat"
+
+The bot **automatically** prepends a short instruction with the **absolute path** to the project's outbox folder to the very first message of every new SDK chat, so the agent knows where to save files (it's working in someone else's `cwd` and can't guess the bot's `data/outbox/...` path on its own).
+
+### Good combinations
+
+- **`chrome-devtools-mcp`** — `take_screenshot` saves a PNG to file, the agent just drops it in the outbox.
+- **`Write` tool** — the agent writes any binary/text file straight into the outbox.
+- **`shell` command** — `curl -o <outboxDir>/file.png ...`, `playwright screenshot ...`, ImageMagick, etc.
+
+### Limits
+
+- **Files > 50 MB** can't be sent via Telegram Bot API — the bot warns and leaves the file in the outbox.
+- The watcher is only active during a run (idle between messages).
+- Multiple concurrent runs in the **same** project share an outbox folder — the file goes to whichever run's chat picks it up first.
+- A file isn't sent until its mtime is older than 700 ms (race protection while the agent is still writing).
+- **Restarting the bot** wipes `data/outbox/`. Files left there from an interrupted run are lost.
+
+## MCP servers
+
+The bot **does not duplicate** MCP configuration. Instead, the SDK is invoked with `local.settingSources: ["user", "project"]` when an agent is created, which makes it pick up:
+
+- `~/.cursor/mcp.json` — global MCP servers, shared across all projects.
+- `<projectCwd>/.cursor/mcp.json` — project MCP servers.
+
+These are the **same** configurations used by Cursor IDE. Edit MCP in the IDE and the bot will pick up the changes for **new** agents (existing ones need `agent.reload()` or a new chat).
+
+The `/mcp` command shows a merged list:
+- `[project]` — defined in the project
+- `[user]` — defined globally
+- On name conflicts, the project entry wins.
+
+## IDE chats inside the bot
+
+Since v0.2, the bot can **see** chats started in Cursor IDE — read-only. They're loaded directly from `.jsonl` transcripts (`~/.cursor/projects/<normalized-cwd>/agent-transcripts/<chatId>/<chatId>.jsonl`).
+
+In the `📋 Chats` list, IDE chats are marked with the 👀 icon (SDK chats with 💬). When you open an IDE chat:
+
+- You see the name (taken from the first user message), `user`/`assistant` message counters and the last assistant reply.
+- The **"🔄 Continue in bot"** button creates a **new** SDK agent with the IDE chat history as a bootstrap prompt, and your next text message goes into this new SDK agent. This effectively continues the IDE topic in the bot (with full context but a **different `agentId`**; the IDE chat itself won't be synced).
+- Up to the **last 60 messages** of the transcript are imported (so we don't blow out the context window). Full history stays in the IDE.
+
+> Direct writes to an IDE chat (using the same `agentId`) **aren't possible** — `Agent.resume()` from the SDK doesn't find IDE chats in its store. That's why we bootstrap a copy into a new SDK agent.
+
+## Security
+
+This version uses the **minimum** sensible level of access control: a Telegram User ID whitelist. That's enough for one user on a personal machine. If you plan to share access — see [Roadmap](#roadmap), where pairing tokens and an audit log are planned.
+
+### What's already in place
+
+1. **Whitelist as the first middleware**. Any update from a user not in `ALLOWED_USER_IDS` is silently dropped (`return` without reply). The bot doesn't answer, doesn't acknowledge its existence, only writes a `warn` to the log. That's safer than "access denied" because it doesn't reveal there's a working bot at this token.
+2. **No webhooks** — long-polling, no inbound ports.
+3. **Logs are redacted**: `TELEGRAM_BOT_TOKEN`, `CURSOR_API_KEY`, `Authorization` headers are masked (see `src/logger.ts`).
+4. **`.env`, `projects.json`, `data/`** are in `.gitignore`. Tokens and paths don't leak into git.
+5. **Message contents** are not logged by default — only metadata (`user_id`, `project_id`, `agent_id`). Set `LOG_MESSAGES=true` for debug.
+
+### Recommended manual steps
+
+1. **Make the bot private** in @BotFather:
    - `/setjoingroups` → `Disable`
-   - `/setprivacy` → `Enable` (бот не видит сообщения в группах)
-2. **Не используйте этого бота в групповых чатах**. Бот разработан под личный диалог.
-3. **`CURSOR_API_KEY` имеет полный доступ** к вашему Cursor-аккаунту (run, биллинг). Берегите `.env`.
-4. Если выложите `dist/` куда-то на сервер — убедитесь, что `.env` тоже защищён (например, права 600 на Linux).
-5. Если пользуетесь не одной машиной — рассмотрите поднятие на VPS, не на ноутбуке (но тогда нужны другие проекты на VPS — это уже другой сценарий).
+   - `/setprivacy` → `Enable` (the bot can't see group messages)
+2. **Don't use this bot in group chats**. It's designed for one-on-one DMs.
+3. **`CURSOR_API_KEY` has full access** to your Cursor account (runs, billing). Guard your `.env`.
+4. If you deploy `dist/` to a server — make sure `.env` is protected too (e.g. mode 600 on Linux).
+5. If you use more than one machine, consider running the bot on a VPS, not your laptop (but then you need other projects on that VPS too — different scenario).
 
-## MCP-серверы
-
-Бот **не дублирует** конфигурацию MCP — вместо этого SDK получает `local.settingSources: ["user", "project"]` при создании агента, и сам подхватывает:
-
-- `~/.cursor/mcp.json` — глобальные MCP, общие для всех проектов.
-- `<projectCwd>/.cursor/mcp.json` — проектные MCP.
-
-Это **те же** конфигурации, которые использует Cursor IDE. Если вы редактируете MCP в IDE — бот сразу подхватывает изменения для **новых** агентов (для уже созданных — только после `agent.reload()` или нового чата).
-
-Команда `/mcp` показывает merged-список:
-- `[project]` — определён в проекте
-- `[user]` — определён глобально
-- При конфликтах имён приоритет за проектом.
-
-## Файлы и скриншоты от агента
-
-Cursor-агент умеет присылать вам в Telegram **скриншоты, картинки и любые файлы** через папку-«outbox».
-
-### Как это работает
-
-1. Outbox-папки лежат **рядом с ботом**, не в проектах: `<botCwd>/data/outbox/<projectId>/`.
-   Это значит, что чужие проекты **не пачкаются** служебными артефактами и не нужно ничего добавлять в их `.gitignore`.
-2. **При каждом старте бота** вся папка `data/outbox/` полностью удаляется и создаётся заново. Никаких залежей старых файлов от прошлых сессий.
-3. Пока активен run, бот «следит» за outbox-папкой проекта.
-4. Любой новый файл, который агент сохранит туда по абсолютному пути, **автоматически уходит в Telegram-чат**, в котором запущен этот run, и **удаляется** из outbox.
-5. По расширению бот сам выбирает способ отправки:
-   - `.png/.jpg/.jpeg/.webp/.gif/.bmp` (≤ 10 MB) → как **фото** (`sendPhoto`).
-   - всё остальное (≤ 50 MB) → как **документ** (`sendDocument`).
-6. Опционально рядом с файлом можно положить `<имя>.<ext>.caption.txt` — содержимое станет подписью в Telegram (до 1024 символов).
-
-### Как этим пользоваться
-
-Просто попросите агента в чате:
-
-> «Сделай скриншот текущей страницы и пришли мне в телеграм»
->
-> «Скачай вот эту картинку и пришли сюда: https://...»
->
-> «Сгенерируй PNG с диаграммой компонентов и отправь в чат»
-
-Бот **автоматически** добавляет в первое сообщение каждого нового SDK-чата короткую инструкцию с **абсолютным путём** к outbox-папке этого проекта, поэтому агент знает, куда сохранять файлы (он сам в чужом cwd, и без подсказки путь к `data/outbox/...` бота не угадает).
-
-### Хорошие сочетания
-
-- **`chrome-devtools-mcp`** — `take_screenshot` сохраняет PNG в файл, агенту достаточно положить его в outbox.
-- **`Write`-инструмент** — агент сам пишет произвольный бинарный/текстовый файл прямо в outbox.
-- **`shell`-команда** — `curl -o <outboxDir>/file.png ...`, `playwright screenshot ...`, `imagemagick`, и т.д.
-
-### Ограничения
-
-- **Файлы > 50 MB** Telegram Bot API отправить не может — бот просто покажет предупреждение и оставит файл в outbox-папке.
-- Бот следит за папкой только пока активен run (между сообщениями watcher остановлен).
-- Несколько одновременных run-ов в **одном** проекте делят одну outbox-папку — файл уйдёт в чат того run-а, который раньше успел его подхватить.
-- Файл не отправляется, пока его mtime моложе 700 мс (защита от гонки, если агент ещё дописывает файл).
-- При **рестарте бота** содержимое `data/outbox/` обнуляется. Если агент успел положить туда файл, но run прервался до отправки — файл потеряется.
-
-## Архитектура
+## Architecture
 
 ```
 src/
-├── index.ts                # Entrypoint: загрузка конфига, старт бота, graceful shutdown
-├── config.ts               # Zod-схемы для .env и projects.json
-├── logger.ts               # pino, с redaction
-├── types.ts                # Доменные типы
+├── index.ts                # Entrypoint: load config, start bot, graceful shutdown
+├── config.ts               # Zod schemas for .env and projects.json
+├── logger.ts               # pino + redaction
+├── types.ts                # Domain types
 │
 ├── bot/
-│   ├── bot.ts              # grammy: создание Bot, регистрация middleware
-│   ├── auth.ts             # Whitelist-middleware
+│   ├── bot.ts              # grammy: create Bot, register middleware
+│   ├── auth.ts             # Whitelist middleware
 │   ├── session.ts          # In-memory Map<userId, UserSession>
-│   ├── keyboards.ts        # Inline-клавиатуры всех меню
+│   ├── keyboards.ts        # Inline keyboards for every menu
+│   ├── inbox.ts            # User attachments → agent (photos/files)
 │   ├── outbox.ts           # Watcher data/outbox/<projectId>/ → Telegram
-│   └── handlers.ts         # Все handlers: команды, callbacks, message:text
+│   └── handlers.ts         # All handlers: commands, callbacks, message:text
 │
 ├── agents/
-│   ├── manager.ts          # AgentManager: create/resume/list/close + кэш
-│   ├── streamer.ts         # run.stream() → Telegram (debounced edit, chunking)
-│   └── formatter.ts        # SDKMessage → лаконичный текст для Telegram
+│   ├── manager.ts          # AgentManager: create/resume/list/close + cache
+│   ├── streamer.ts         # run.stream() → Telegram (debounced edits, chunking)
+│   ├── formatter.ts        # SDKMessage → concise text for Telegram
+│   └── recovery.ts         # Resume active runs after a bot restart
 │
 ├── cursor/
-│   └── mcp-loader.ts       # Чтение ~/.cursor/mcp.json + <project>/.cursor/mcp.json
+│   ├── mcp-loader.ts       # Reads ~/.cursor/mcp.json + <project>/.cursor/mcp.json
+│   ├── ide-store.ts        # Read & manage Cursor IDE transcripts
+│   └── sdk-store.ts        # Read & manage SDK agent SQLite store
 │
 └── util/
-    ├── chunk.ts            # Разбиение на 4096-байтные сообщения
+    ├── chunk.ts            # Split into 4096-byte messages
     └── markdown.ts         # MarkdownV2 escape
 ```
 
-### Поток выполнения
+### Execution flow
 
-1. **Update от Telegram** → `whitelistMiddleware` (фильтрация по `ALLOWED_USER_IDS`).
-2. → `handlers.ts`: команда / callback / текст.
-3. Для текста:
-   - `SessionStore` подсказывает `selectedProjectId` и `activeAgentId`.
-   - Если агента нет — `AgentManager.createAgent(project)`.
-   - Иначе — `AgentManager.resumeAgent(project, agentId)`.
+1. **Telegram update** → `whitelistMiddleware` (filter by `ALLOWED_USER_IDS`).
+2. → `handlers.ts`: command / callback / text.
+3. For text messages:
+   - `SessionStore` provides the `selectedProjectId` and `activeAgentId`.
+   - If no agent — `AgentManager.createAgent(project)`.
+   - Otherwise — `AgentManager.resumeAgent(project, agentId)`.
    - `agent.send(text)` → `Run`.
-4. **`streamRun(...)`** в фоне:
-   - `for await (const event of run.stream())` — события `assistant`, `tool_call`, `status`, ...
-   - Ассистентский текст накапливается в одном Telegram-сообщении и редактируется с debounce (`STREAM_EDIT_DEBOUNCE_MS`).
-   - Tool-calls — отдельные сообщения, обновляются `running → completed/error`.
-   - По завершении — `run.wait()` → итог + git-инфо.
-5. **`/cancel`** или callback → `run.cancel()`.
+4. **`streamRun(...)`** in the background:
+   - `for await (const event of run.stream())` — events `assistant`, `tool_call`, `status`, ...
+   - Assistant text is accumulated in a single Telegram message and edited with debounce (`STREAM_EDIT_DEBOUNCE_MS`).
+   - Tool calls are separate messages, updated `running → completed/error`.
+   - On finish — `run.wait()` → result + git info.
+5. **`/cancel`** or callback → `run.cancel()`.
 
-### Сессия (in-memory)
+### Session shape (in-memory + persisted)
 
 ```typescript
 interface UserSession {
   userId: number;
   selectedProjectId?: string;
   activeAgentId?: string;
+  activeChatKind?: "sdk" | "ide";
   activeRunId?: string;
-  awaitingTextFor?: "new_chat";
+  awaitingText?: AwaitingText;
 }
 ```
 
-При рестарте бота сессии теряются, **но агенты живут**. Заходим в проект → меню «Чаты» → выбираем нужного → `Agent.resume()` восстанавливает диалог.
+Sessions are persisted to `data/sessions.json` (debounced writes). After a restart they're reloaded; agents created earlier remain accessible — open the project → "Chats" → select the one you want, and `Agent.resume()` restores the conversation.
 
-## IDE-чаты в боте
+## Known limitations
 
-С v0.2+ бот **видит** чаты, начатые в Cursor IDE — в режиме read-only. Они читаются напрямую из `.jsonl`-транскриптов (`~/.cursor/projects/<normalized-cwd>/agent-transcripts/<chatId>/<chatId>.jsonl`).
-
-В списке `📋 Чаты` IDE-чаты помечены иконкой 👀 (SDK-чаты — 💬). При выборе IDE-чата:
-
-- Видим имя (взято из первого сообщения пользователя), счётчики user/assistant сообщений, последний ответ ассистента.
-- Кнопка **«🔄 Продолжить в боте»** — создаёт **новый** SDK-агент с историей IDE-чата как bootstrap-промптом, и ваш следующий текст идёт в этот SDK-агент. Это позволяет фактически продолжить тему из IDE в боте (с полным контекстом, но **другим agentId**; в IDE-чате сихронизации не будет).
-- В транскрипте берутся последние **60 сообщений** (чтобы не упереться в context-window). Полная история — в IDE.
-
-> Прямая запись в IDE-чат (через тот же `agentId`) **невозможна** — `Agent.resume()` SDK не находит IDE-чаты в своём сторе. Поэтому используется bootstrap-копия в новый SDK-агент.
-
-## Известные ограничения
-
-- **IDE-чаты read-only.** Писать в них напрямую через бот нельзя — только через «🔄 Продолжить в боте» (создаёт SDK-копию с историей).
-- **SDK-агенты не видны в IDE-панели Agents** (по крайней мере в Cursor 1.x). Это поведение **самого Cursor IDE**, не бота: документация SDK прямо говорит «SDK-агенты исключаются из списка по умолчанию», для cloud есть `Filter > Source > SDK` в Web/IDE, для local-runtime в IDE 1.x этот фильтр отсутствует. Workaround:
-  - Управление SDK-агентами — через **Telegram-бот** (основной интерфейс).
-  - Просмотр **cloud** SDK-агентов — на https://cursor.com/agents с `Filter > Source > SDK`.
-  - Диагностика всех local-агентов проекта — команда `npm run list-agents` (выводит из всех проектов в `projects.json`).
-- **Shell-команды не блокируются для подтверждения.** В этой версии — observe-only: вы видите факт выполнения в Telegram, но не можете approve/deny. Если нужен блокирующий approval — см. [Roadmap](#roadmap).
-- **Артефакты локальных агентов недоступны** (это ограничение SDK: `agent.listArtifacts()` для local возвращает `[]`).
-- **Нет загрузки изображений из Telegram в агента** (направление user → agent). SDK поддерживает (`SDKUserMessage.images`), но в боте пока не реализовано. Обратное направление (agent → Telegram) есть — см. [Файлы и скриншоты от агента](#файлы-и-скриншоты-от-агента).
-- **Один пользователь = одна машина.** Если вам нужен multi-user или multi-host — нужна переработка.
-- **Restart = потеря активных стримов.** Если бот рестартанёт во время run — стрим оборвётся. Сам run на стороне Cursor SDK продолжится, но без живой обратной связи в Telegram. После возврата к чату вы увидите уже завершённый результат через `Agent.list()` и сможете продолжить с `agent.send()`.
+- **IDE chats are read-only.** You can't write to them directly through the bot — only via "🔄 Continue in bot" (which creates an SDK copy with the history).
+- **SDK agents are not visible in the IDE Agents panel** (at least in Cursor 1.x). This is **Cursor IDE behaviour**, not the bot's: the SDK docs explicitly say "SDK agents are excluded from the list by default", and although there's a `Filter > Source > SDK` option for cloud agents in Web/IDE, the local-runtime filter is missing in IDE 1.x. Workarounds:
+  - Manage SDK agents via the **Telegram bot** (the primary interface).
+  - View **cloud** SDK agents on https://cursor.com/agents with `Filter > Source > SDK`.
+  - Diagnose all local agents in a project with `npm run list-agents` (lists agents from every project in `projects.json`).
+- **Shell commands aren't gated for approval.** Today it's observe-only: you see the execution in Telegram but can't approve/deny. Blocking approvals are planned (see [Roadmap](#roadmap)).
+- **Local agent artifacts are unavailable** (SDK limitation: `agent.listArtifacts()` returns `[]` for local).
+- **One user = one machine.** Multi-user / multi-host needs more work.
+- **Restart = active streams are lost.** If the bot restarts during a run the live stream breaks. The run itself continues on the Cursor SDK side, but without live feedback in Telegram. After returning to the chat you'll see the finished result via `Agent.list()` and can continue with `agent.send()`.
 
 ## Troubleshooting
 
 ### `TELEGRAM_BOT_TOKEN is required` / `CURSOR_API_KEY is required`
 
-Не заполнен `.env`. Проверьте, что файл лежит в корне проекта рядом с `package.json`.
+`.env` is empty. Make sure the file is in the project root, next to `package.json`.
 
 ### `ALLOWED_USER_IDS must be set...`
 
-Заполните CSV-список Telegram User ID. Узнать свой ID: [@userinfobot](https://t.me/userinfobot).
+Fill in the CSV of Telegram user IDs. Get yours from [@userinfobot](https://t.me/userinfobot).
 
-### Бот не отвечает на `/start`
+### The bot doesn't reply to `/start`
 
-1. Проверьте лог — там должен быть `rejected unauthorized update` с указанным `userId`. Если ваш ID не в `ALLOWED_USER_IDS` — добавьте.
-2. Проверьте, что бот действительно запустился — в логе должно быть `telegram bot started`.
-3. Проверьте, что @BotFather не отозвал токен.
+1. Check the log — there should be `rejected unauthorized update` with the `userId`. If your ID isn't in `ALLOWED_USER_IDS`, add it.
+2. Check that the bot actually started — `telegram bot started` should appear in the log.
+3. Check that @BotFather hasn't revoked the token.
 
 ### `Cursor SDK error (auth_failed)`
 
-`CURSOR_API_KEY` истёк или невалиден. Создайте новый в [cursor.com/dashboard/integrations](https://cursor.com/dashboard/integrations).
+`CURSOR_API_KEY` is expired or invalid. Create a new one at [cursor.com/dashboard/integrations](https://cursor.com/dashboard/integrations).
 
-### `model not found` или `invalid model selection`
+### `model not found` or `invalid model selection`
 
-Ваш аккаунт не имеет доступа к модели из `DEFAULT_MODEL_ID`. Запустите проверку:
+Your account doesn't have access to the model in `DEFAULT_MODEL_ID`. List available ones:
 
 ```bash
 node --input-type=module -e "import('@cursor/sdk').then(s=>s.Cursor.models.list({apiKey:process.env.CURSOR_API_KEY}).then(m=>console.log(m)))"
 ```
 
-И поставьте корректный `id` в `.env`.
+Then put a valid `id` in `.env`.
 
-### MCP-сервер не виден в `/mcp`
+### MCP server not visible in `/mcp`
 
-1. Проверьте `~/.cursor/mcp.json` (Windows: `C:\Users\<user>\.cursor\mcp.json`) — JSON должен быть валидным.
-2. Для проектных MCP — должен быть `<projectCwd>/.cursor/mcp.json`.
-3. Перезапустите бота (новые MCP подхватываются для новых агентов).
+1. Check `~/.cursor/mcp.json` (Windows: `C:\Users\<user>\.cursor\mcp.json`) — JSON must be valid.
+2. For project MCP — there must be a `<projectCwd>/.cursor/mcp.json`.
+3. Restart the bot (new MCP entries are picked up for new agents only).
 
 ### `message is not modified`
 
-Это лог-предупреждение из стримера, не ошибка. Возникает когда дебаунс-edit пытается записать тот же текст. Игнорируется автоматически.
+A log warning from the streamer, not an error. It happens when a debounced edit tries to write the same text. Ignored automatically.
 
-### Создал чат через бот, но в Cursor IDE его не видно
+### "Created a chat in the bot but I don't see it in Cursor IDE"
 
-Это ожидаемо: в Cursor IDE 1.x SDK-агенты с `runtime: local` не отображаются в панели Agents — её UI пока показывает только IDE-чаты. Подтвердить, что чат на самом деле создан, можно командой:
+That's expected: in Cursor IDE 1.x SDK agents with `runtime: local` aren't shown in the Agents panel — the UI currently only shows IDE chats. To confirm the chat actually exists, run:
 
 ```bash
 npm run list-agents
 ```
 
-Она использует тот же `Agent.list({ runtime: "local", cwd })`, что и бот, и выводит всех агентов из всех проектов `projects.json`.
+It uses the same `Agent.list({ runtime: "local", cwd })` as the bot and lists agents from every project in `projects.json`.
 
-В самом боте чат виден через `📁 Проекты → <Project> → 💬 Чаты` (счётчик в заголовке отражает реальное количество).
+In the bot the chat is visible via `📁 Projects → <Project> → 💬 Chats` (the counter in the header reflects the real count).
 
-### `bot.start()` зависает на старте (Windows + корпоративная сеть)
+### `bot.start()` hangs at startup (Windows + corporate network)
 
-Симптомы: в логе `starting cursor-tg-bot` и `sessions loaded`, но `telegram bot started` не появляется. Через `Invoke-WebRequest` Telegram API отвечает мгновенно, через Node — нет.
+Symptoms: the log shows `starting cursor-tg-bot` and `sessions loaded`, but `telegram bot started` never appears. The Telegram API responds instantly via `Invoke-WebRequest`, but not via Node.
 
-Причина: TLS-инспектор (Zscaler / Fortinet / Kaspersky / антивирус) подменяет сертификаты, Windows-store доверяет, а Node — нет (у него свой CA bundle). PowerShell использует Windows store, Node — нет.
+Cause: a TLS inspector (Zscaler / Fortinet / Kaspersky / antivirus) substitutes certificates. The Windows store trusts them, but Node doesn't (it ships its own CA bundle). PowerShell uses the Windows store, Node doesn't.
 
-Решение: бот автоматически подхватывает CAs из Windows store через [`win-ca`](https://www.npmjs.com/package/win-ca) с режимом `inject: "+"` (патчит `tls.createSecureContext`, поэтому работает и для `node:https`, и для native `fetch` / undici). Это происходит в самом начале `src/index.ts`. На macOS/Linux этот блок пропускается.
+Fix: the bot automatically loads CAs from the Windows store via [`win-ca`](https://www.npmjs.com/package/win-ca) with `inject: "+"` (patches `tls.createSecureContext`, so it works for both `node:https` and native `fetch` / undici). This happens at the very top of `src/index.ts`. On macOS/Linux that block is skipped.
 
-Если бот всё равно зависает на старте — проверьте, что у вас Windows-сертификаты обновлены (`certutil -urlfetch -verify`), или временно установите `NODE_TLS_REJECT_UNAUTHORIZED=0` в `.env` (НЕБЕЗОПАСНО, только для отладки).
+If the bot still hangs at startup — verify Windows certificates are up to date (`certutil -urlfetch -verify`), or temporarily set `NODE_TLS_REJECT_UNAUTHORIZED=0` in `.env` (UNSAFE, debug only).
 
 ### Telegram rate limit (`429 Too Many Requests`)
 
-Увеличьте `STREAM_EDIT_DEBOUNCE_MS` в `.env` (например, до `1500`). По умолчанию `900` мс — комфортно для одного активного диалога.
+Increase `STREAM_EDIT_DEBOUNCE_MS` in `.env` (e.g. to `1500`). The default `900` ms is comfortable for one active conversation.
 
 ## Roadmap
 
-### v0.2 — Безопасность и UX
+### v0.2 — Security & UX
 
-- [ ] Pairing-токен при первом `/start` (одноразовый секрет, выдаётся вручную в IDE → подтверждается в боте).
-- [ ] Аудит-лог всех команд (отдельный файл / append-only).
-- [ ] Команда `/lock` и автолок после N минут бездействия.
-- [ ] Persistent-сессии в SQLite (восстановление состояния после рестарта).
-- [ ] `/models` — список доступных моделей и переключение между ними.
+- [ ] Pairing token on first `/start` (one-time secret, issued in IDE → confirmed in the bot).
+- [ ] Audit log of every command (separate file, append-only).
+- [ ] `/lock` command and auto-lock after N minutes of inactivity.
+- [ ] `/models` — list available models and switch between them.
 
-### v0.3 — IDE-чаты в боте ✅
+### v0.3 — IDE chats in the bot ✅
 
-- [x] Чтение `.jsonl`-транскриптов из `~/.cursor/projects/<normalized-cwd>/agent-transcripts/`.
-- [x] Список IDE-чатов в `📋 Чаты` рядом с SDK-чатами.
-- [x] Просмотр последнего ответа агента в IDE-чате.
-- [x] «🔄 Продолжить в боте» — bootstrap нового SDK-агента с историей IDE-чата.
+- [x] Read `.jsonl` transcripts from `~/.cursor/projects/<normalized-cwd>/agent-transcripts/`.
+- [x] List IDE chats in `📋 Chats` next to SDK chats.
+- [x] View the last assistant reply for an IDE chat.
+- [x] "🔄 Continue in bot" — bootstrap a new SDK agent from the IDE chat history.
 
-### v0.4 — Удаление чатов ✅
+### v0.4 — Chat deletion ✅
 
-- [x] Режим «🗑 Управление» в списке чатов: появляется корзинка только у SDK-чатов.
-- [x] Подтверждение перед удалением (Да / Отмена).
-- [x] Удаление SDK-агентов: запись из `sdk-agent-store/.../index.db` (агент + runs + run_events) + директория транскрипта + закрытие активных handles.
-- [x] **IDE-чаты НЕ удаляются** — Cursor IDE использует их транскрипты для собственной работы; удаление может повредить установку IDE. Защита на двух уровнях: UI (кнопка просто не показывается) + код (`deleteTranscriptFolder` и `deleteSdkAgent` отказываются работать с папками без префикса `agent-`).
-- [x] Очистка сессии, если активный чат был удалён.
+- [x] "🗑 Manage" mode in the chat list: trash icon shown only for SDK chats.
+- [x] Confirm before delete (Yes / Cancel).
+- [x] Delete SDK agents: row in `sdk-agent-store/.../index.db` (agent + runs + run_events) + transcript folder + close active handles.
+- [x] **IDE chats are NOT deleted** — Cursor IDE uses their transcripts; deleting them can corrupt the IDE installation. Protected at two levels: UI (button hidden) + code (`deleteTranscriptFolder` and `deleteSdkAgent` refuse folders without the `agent-` prefix).
+- [x] Clear the session if the active chat was deleted.
 
-### v0.5 — Recovery после рестарта ✅
+### v0.5 — Recovery after restart ✅
 
-- [x] При старте бот проходит по сохранённым `activeRunId` и через `Agent.getRun()` ждёт их завершения с timeout 5 минут — присылает итог в Telegram.
-- [x] Авто-recovery залипшего persistent run при следующем `agent.send()` через флаг `local: { force: true }` (автоматический retry в `manager.sendMessage`).
-- [x] Persistent-сессии в `data/sessions.json`.
-- [x] Поддержка корпоративных TLS-инспекторов через `win-ca.inject('+')`.
+- [x] On startup, walk saved `activeRunId`s and use `Agent.getRun()` to wait for them with a 5-minute timeout — deliver the result to Telegram.
+- [x] Auto-recovery for stuck persistent runs on the next `agent.send()` via `local: { force: true }` (automatic retry in `manager.sendMessage`).
+- [x] Persistent sessions in `data/sessions.json`.
+- [x] Corporate TLS-inspector support via `win-ca.inject('+')`.
 
-### v0.4 — Блокирующий shell-approval
+### v0.6 — Blocking shell approvals
 
-- [ ] Авто-генерация `<project>/.cursor/hooks.json` с `beforeShellExecution`-хуком.
-- [ ] Хук вызывает скрипт-мост, который ждёт ответа бота через файловый IPC.
-- [ ] Inline-кнопки `✅ Approve` / `❌ Deny` в Telegram.
+- [ ] Auto-generate `<project>/.cursor/hooks.json` with a `beforeShellExecution` hook.
+- [ ] Hook calls a bridge script that waits for the bot's response via file IPC.
+- [ ] Inline `✅ Approve` / `❌ Deny` buttons in Telegram.
 
-### v0.5 — Изображения и артефакты
+### v1.0 — Cloud mode
 
-- [ ] Загрузка фото из Telegram → `agent.send({ text, images })`.
-- [ ] Скачивание артефактов (для cloud-агентов, когда добавим поддержку).
+- [ ] Optional `cloud` runtime for heavy tasks, doesn't depend on a running machine.
+- [ ] `autoCreatePR` integration with GitHub.
 
-### v1.0 — Cloud-режим
+## Contributing
 
-- [ ] Опциональный `cloud` runtime для тяжёлых задач, не зависящий от наличия машины.
-- [ ] `autoCreatePR` интеграция с GitHub.
+Bug reports and pull requests are welcome on GitHub at <https://github.com/SOLAR8888/cursor-tg-bot>.
 
-## Лицензия
+This is a small personal project — please open an issue first for anything substantial so we can discuss the approach.
 
-ISC (см. `LICENSE` если будет добавлен).
+## License
+
+[ISC](./LICENSE) © cursor-tg-bot contributors

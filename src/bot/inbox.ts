@@ -105,8 +105,8 @@ export interface DownloadedFile {
 export class TelegramFileTooBigError extends Error {
   constructor() {
     super(
-      "Файл больше 20 МБ — Telegram Bot API не даёт ботам скачивать такие файлы. " +
-        "Пришлите файл меньшего размера или поднимите local Bot API server.",
+      "File larger than 20 MB — Telegram Bot API does not allow bots to download such files. " +
+        "Send a smaller file or run a local Bot API server.",
     );
     this.name = "TelegramFileTooBigError";
   }
@@ -166,7 +166,7 @@ export function formatTextFileForPrompt(
   const head = caption?.trim() ? caption.trim() + "\n\n" : "";
   return (
     head +
-    `[Прикреплён файл \`${fileName}\` (${content.length} chars):]\n` +
+    `[Attached file \`${fileName}\` (${content.length} chars):]\n` +
     "```\n" +
     content +
     "\n```"
@@ -182,9 +182,9 @@ export function formatBinaryFileForPrompt(
   const head = caption?.trim() ? caption.trim() + "\n\n" : "";
   return (
     head +
-    `[Прикреплён файл: \`${fileName}\` (${formatSize(size)})]\n` +
-    `Сохранён по абсолютному пути: \`${absolutePath}\`\n` +
-    `Прочитай его своими инструментами при необходимости.`
+    `[Attached file: \`${fileName}\` (${formatSize(size)})]\n` +
+    `Saved at absolute path: \`${absolutePath}\`\n` +
+    `Read it with your tools if needed.`
   );
 }
 

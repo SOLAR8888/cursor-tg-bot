@@ -48,11 +48,11 @@ export type ChatKindShort = "s" | "i";
 
 export function rootKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("📁 Проекты", CB.PROJECTS)
+    .text("📁 Projects", CB.PROJECTS)
     .row()
-    .text("🔌 MCP (глобальные)", `${CB.MCP}:_global`)
+    .text("🔌 MCP (global)", `${CB.MCP}:_global`)
     .row()
-    .text("ℹ️ Помощь", CB.HELP);
+    .text("ℹ️ Help", CB.HELP);
 }
 
 export function projectsKeyboard(projects: readonly ProjectConfig[]): InlineKeyboard {
@@ -60,19 +60,19 @@ export function projectsKeyboard(projects: readonly ProjectConfig[]): InlineKeyb
   for (const p of projects) {
     kb.text(p.name, `${CB.PROJECT}:${p.id}`).row();
   }
-  kb.text("⬅️ Назад", CB.ROOT);
+  kb.text("⬅️ Back", CB.ROOT);
   return kb;
 }
 
 export function projectKeyboard(projectId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("💬 Чаты", `${CB.CHATS}:${projectId}`)
+    .text("💬 Chats", `${CB.CHATS}:${projectId}`)
     .row()
-    .text("➕ Новый чат", `${CB.NEW_CHAT}:${projectId}`)
+    .text("➕ New chat", `${CB.NEW_CHAT}:${projectId}`)
     .row()
-    .text("🔌 MCP проекта", `${CB.MCP}:${projectId}`)
+    .text("🔌 Project MCP", `${CB.MCP}:${projectId}`)
     .row()
-    .text("⬅️ К проектам", CB.PROJECTS);
+    .text("⬅️ Projects", CB.PROJECTS);
 }
 
 export function chatsKeyboard(
@@ -85,7 +85,7 @@ export function chatsKeyboard(
   const manage = options.manageMode === true;
 
   if (sdkAgents.length === 0 && ideChats.length === 0) {
-    kb.text("➕ Создать первый чат", `${CB.NEW_CHAT}:${projectId}`).row();
+    kb.text("➕ Create first chat", `${CB.NEW_CHAT}:${projectId}`).row();
   } else {
     if (sdkAgents.length > 0) {
       for (const a of sdkAgents) {
@@ -119,14 +119,14 @@ export function chatsKeyboard(
       }
     }
     if (manage) {
-      kb.text("✅ Готово", `${CB.CHATS}:${projectId}`).row();
+      kb.text("✅ Done", `${CB.CHATS}:${projectId}`).row();
     } else {
-      kb.text("➕ Новый чат", `${CB.NEW_CHAT}:${projectId}`)
-        .text("🗑 Управление", `${CB.CHATS_MANAGE}:${projectId}`)
+      kb.text("➕ New chat", `${CB.NEW_CHAT}:${projectId}`)
+        .text("🗑 Manage", `${CB.CHATS_MANAGE}:${projectId}`)
         .row();
     }
   }
-  kb.text("⬅️ К проекту", `${CB.PROJECT}:${projectId}`);
+  kb.text("⬅️ To project", `${CB.PROJECT}:${projectId}`);
   return kb;
 }
 
@@ -138,51 +138,51 @@ export function deleteConfirmKeyboard(
   const shortId = kind === "s" ? shortenSdkAgentId(chatId) : chatId;
   return new InlineKeyboard()
     .text(
-      "🗑️ Да, удалить",
+      "🗑️ Yes, delete",
       assertCallbackFits(
         `${CB.DELETE_YES}:${projectId}:${kind}:${shortId}`,
       ),
     )
     .text(
-      "⬅️ Отмена",
+      "⬅️ Cancel",
       assertCallbackFits(`${CB.DELETE_NO}:${projectId}:${kind}:${shortId}`),
     );
 }
 
 export function activeChatKeyboard(projectId: string, isRunning: boolean): InlineKeyboard {
   const kb = new InlineKeyboard();
-  if (isRunning) kb.text("🛑 Отменить run", CB.CANCEL_RUN).row();
-  kb.text("📋 Чаты", `${CB.CHATS}:${projectId}`)
-    .text("➕ Новый", `${CB.NEW_CHAT}:${projectId}`)
+  if (isRunning) kb.text("🛑 Cancel run", CB.CANCEL_RUN).row();
+  kb.text("📋 Chats", `${CB.CHATS}:${projectId}`)
+    .text("➕ New", `${CB.NEW_CHAT}:${projectId}`)
     .row()
-    .text("📁 Проекты", CB.PROJECTS)
-    .text("🏠 Главное", CB.ROOT);
+    .text("📁 Projects", CB.PROJECTS)
+    .text("🏠 Home", CB.ROOT);
   return kb;
 }
 
 export function ideChatKeyboard(projectId: string, ideChatId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text(
-      "🔄 Продолжить в боте",
+      "🔄 Continue in bot",
       assertCallbackFits(
         `${CB.CONTINUE_IDE}:${projectId}:${ideChatId}`,
       ),
     )
     .row()
-    .text("📋 Чаты", `${CB.CHATS}:${projectId}`)
-    .text("➕ Новый", `${CB.NEW_CHAT}:${projectId}`)
+    .text("📋 Chats", `${CB.CHATS}:${projectId}`)
+    .text("➕ New", `${CB.NEW_CHAT}:${projectId}`)
     .row()
-    .text("📁 Проекты", CB.PROJECTS)
-    .text("🏠 Главное", CB.ROOT);
+    .text("📁 Projects", CB.PROJECTS)
+    .text("🏠 Home", CB.ROOT);
 }
 
 export function afterRunKeyboard(projectId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("📋 Чаты", `${CB.CHATS}:${projectId}`)
-    .text("➕ Новый", `${CB.NEW_CHAT}:${projectId}`)
+    .text("📋 Chats", `${CB.CHATS}:${projectId}`)
+    .text("➕ New", `${CB.NEW_CHAT}:${projectId}`)
     .row()
-    .text("📁 Проекты", CB.PROJECTS)
-    .text("🏠 Главное", CB.ROOT);
+    .text("📁 Projects", CB.PROJECTS)
+    .text("🏠 Home", CB.ROOT);
 }
 
 function truncate(text: string, max: number): string {

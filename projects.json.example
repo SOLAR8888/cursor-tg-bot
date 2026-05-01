@@ -1,17 +1,16 @@
 {
-  "$schema": "./projects.schema.json",
   "projects": [
     {
-      "id": "cursor-tg-bot",
-      "name": "Cursor TG Bot",
-      "cwd": "C:\\Users\\SOLAR\\work\\SOLAR\\cursor-tg-bot",
-      "description": "This bot itself"
+      "id": "myapp",
+      "name": "My App",
+      "cwd": "C:\\Users\\me\\work\\myapp",
+      "description": "Production app — replace with your real project"
     },
     {
-      "id": "example-app",
-      "name": "Example App",
-      "cwd": "C:\\Users\\SOLAR\\work\\example-app",
-      "description": "Sample project — replace with your real ones"
+      "id": "another-project",
+      "name": "Another Project",
+      "cwd": "/home/me/work/another-project",
+      "description": "Linux/macOS path example"
     }
   ]
 }

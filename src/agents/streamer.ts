@@ -179,7 +179,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
     void bot.api
       .sendMessage(
         chatId,
-        `⏱ Run завис — нет событий ${Math.floor(STALL_TIMEOUT_MS / 1000)}с. Отменяю и можно отправить запрос заново.`,
+        `⏱ Run stalled — no events for ${Math.floor(STALL_TIMEOUT_MS / 1000)}s. Cancelling — feel free to retry.`,
       )
       .catch(() => undefined);
     void run.cancel().catch((err) => {
@@ -221,7 +221,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
               : "";
             await bot.api.sendMessage(
               chatId,
-              `🟡 запуск… ${event.model?.id ?? ""}${tools}`.trim(),
+              `🟡 starting… ${event.model?.id ?? ""}${tools}`.trim(),
             );
             break;
           }
@@ -259,7 +259,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
           case "request":
             await bot.api.sendMessage(
               chatId,
-              "⏸ Агент запросил подтверждение в IDE\\.",
+              "⏸ Agent requested confirmation in IDE\\.",
               { parse_mode: "MarkdownV2" },
             );
             break;
@@ -292,7 +292,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
       );
       const message = err instanceof Error ? err.message : String(err);
       await bot.api
-        .sendMessage(chatId, "⚠️ Ошибка стриминга: " + message)
+        .sendMessage(chatId, "⚠️ Streaming error: " + message)
         .catch(() => undefined);
       return;
     }
@@ -315,20 +315,20 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
       } else {
         logger.info(logPayload, "run finished");
       }
-      const dur = result.durationMs ? ` за ${(result.durationMs / 1000).toFixed(1)}s` : "";
+      const dur = result.durationMs ? ` in ${(result.durationMs / 1000).toFixed(1)}s` : "";
       let text: string;
       switch (result.status) {
         case "finished":
-          text = `🟢 Готово${dur}`;
+          text = `🟢 Done${dur}`;
           break;
         case "cancelled":
-          text = `⚪ Отменено${dur}`;
+          text = `⚪ Cancelled${dur}`;
           break;
         case "error":
           text =
             result.result && result.result.trim().length > 0
-              ? `🔴 Ошибка${dur}\n\n${result.result}`
-              : `🔴 Ошибка${dur}`;
+              ? `🔴 Error${dur}\n\n${result.result}`
+              : `🔴 Error${dur}`;
           break;
       }
       if (result.git?.branches?.length) {
@@ -346,7 +346,7 @@ export async function streamRun(opts: StreamRunOptions): Promise<void> {
         "run.wait failed",
       );
       await bot.api
-        .sendMessage(chatId, "⚠️ Не удалось получить итог run.", {
+        .sendMessage(chatId, "⚠️ Failed to get run result.", {
           reply_markup: afterRunKeyboard(projectId),
         })
         .catch(() => undefined);

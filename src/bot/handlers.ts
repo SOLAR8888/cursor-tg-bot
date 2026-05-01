@@ -46,17 +46,17 @@ interface IncomingMessage {
 import { buildOutboxInstruction, outboxDirForProject } from "./outbox.js";
 
 const HELP_TEXT =
-  "Бот для управления Cursor-агентами в локальных проектах.\n\n" +
-  "Команды:\n" +
-  "  /start — главное меню\n" +
-  "  /projects — список проектов\n" +
-  "  /chats — чаты текущего проекта\n" +
-  "  /new — новый чат в текущем проекте\n" +
-  "  /cancel — отменить текущий run\n" +
-  "  /status — статус run\n" +
-  "  /mcp — MCP-серверы (глобальные)\n" +
-  "  /help — эта справка\n\n" +
-  "Чтобы начать диалог с агентом — выберите проект → чат (или «Новый чат») и просто пишите сообщения.";
+  "Bot for managing Cursor agents in local projects.\n\n" +
+  "Commands:\n" +
+  "  /start — main menu\n" +
+  "  /projects — list of projects\n" +
+  "  /chats — chats in the current project\n" +
+  "  /new — start a new chat in the current project\n" +
+  "  /cancel — cancel the active run\n" +
+  "  /status — current run status\n" +
+  "  /mcp — MCP servers (global)\n" +
+  "  /help — this help text\n\n" +
+  "To start talking to an agent: pick a project → chat (or \"New chat\") and just send messages.";
 
 export function registerHandlers(
   bot: Bot<Context>,
@@ -67,7 +67,7 @@ export function registerHandlers(
   // ---------- COMMANDS ----------
   bot.command("start", async (ctx) => {
     if (ctx.from) sessions.reset(ctx.from.id);
-    await ctx.reply("Главное меню:", { reply_markup: rootKeyboard() });
+    await ctx.reply("Main menu:", { reply_markup: rootKeyboard() });
   });
 
   bot.command("help", async (ctx) => {
@@ -75,7 +75,7 @@ export function registerHandlers(
   });
 
   bot.command("projects", async (ctx) => {
-    await ctx.reply("Выберите проект:", {
+    await ctx.reply("Pick a project:", {
       reply_markup: projectsKeyboard(config.projects),
     });
   });
@@ -84,7 +84,7 @@ export function registerHandlers(
     if (!ctx.from) return;
     const session = sessions.get(ctx.from.id);
     if (!session.selectedProjectId) {
-      await ctx.reply("Сначала выберите проект: /projects");
+      await ctx.reply("Pick a project first: /projects");
       return;
     }
     await sendChatsList(ctx, manager, session.selectedProjectId);
@@ -94,7 +94,7 @@ export function registerHandlers(
     if (!ctx.from) return;
     const session = sessions.get(ctx.from.id);
     if (!session.selectedProjectId) {
-      await ctx.reply("Сначала выберите проект: /projects");
+      await ctx.reply("Pick a project first: /projects");
       return;
     }
     await startNewChatPrompt(ctx, sessions, session.selectedProjectId);
@@ -120,12 +120,12 @@ export function registerHandlers(
   // ---------- CALLBACKS ----------
   bot.callbackQuery(CB.ROOT, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Главное меню:", { reply_markup: rootKeyboard() });
+    await ctx.editMessageText("Main menu:", { reply_markup: rootKeyboard() });
   });
 
   bot.callbackQuery(CB.PROJECTS, async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Выберите проект:", {
+    await ctx.editMessageText("Pick a project:", {
       reply_markup: projectsKeyboard(config.projects),
     });
   });
@@ -141,7 +141,7 @@ export function registerHandlers(
     if (!projectId) return;
     const project = manager.getProject(projectId);
     if (!project) {
-      await ctx.answerCallbackQuery({ text: "Проект не найден", show_alert: true });
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
     }
     sessions.patch(ctx.from.id, {
@@ -178,7 +178,7 @@ export function registerHandlers(
     if (!projectId || !agentId) return;
     const project = manager.getProject(projectId);
     if (!project) {
-      await ctx.answerCallbackQuery({ text: "Проект не найден", show_alert: true });
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
     }
     await ctx.answerCallbackQuery();
@@ -193,11 +193,11 @@ export function registerHandlers(
       await manager.resumeAgent(project, agentId);
     } catch (err) {
       logger.error({ err, agentId }, "resume failed");
-      await ctx.reply("Не удалось подключиться к агенту: " + manager.describeError(err));
+      await ctx.reply("Failed to connect to agent: " + manager.describeError(err));
       return;
     }
 
-    await ctx.reply(`💬 *${project.name}* · SDK-агент \`${agentId}\``, {
+    await ctx.reply(`💬 *${project.name}* · SDK agent \`${agentId}\``, {
       parse_mode: "Markdown",
     });
 
@@ -220,7 +220,7 @@ export function registerHandlers(
       }
     } else {
       await ctx.reply(
-        "У этого агента ещё нет ответов. Напишите первое сообщение.",
+        "This agent has no responses yet. Send the first message.",
         {
           reply_markup: activeChatKeyboard(projectId, manager.isAgentBusy(agentId)),
         },
@@ -235,7 +235,7 @@ export function registerHandlers(
     if (!projectId || !ideChatId) return;
     const project = manager.getProject(projectId);
     if (!project) {
-      await ctx.answerCallbackQuery({ text: "Проект не найден", show_alert: true });
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
     }
     await ctx.answerCallbackQuery();
@@ -264,10 +264,10 @@ export function registerHandlers(
       awaitingText: { kind: "continue_ide", ideChatId },
     });
     await ctx.reply(
-      "🔄 *Перенос IDE-чата в SDK*\n\n" +
-        "Отправьте следующее сообщение — будет создан **новый** SDK-агент с историей этого IDE-чата как контекстом, " +
-        "и ваше сообщение уйдёт в него первым.\n\n" +
-        "_Это новый агент с другим id; в IDE-чате синхронизации не будет._",
+      "🔄 *Transfer IDE chat to SDK*\n\n" +
+        "Send your next message — a **new** SDK agent will be created with this IDE chat's history as context, " +
+        "and your message will be its first.\n\n" +
+        "_This is a new agent with a different id; the IDE chat will not be synced._",
       { parse_mode: "Markdown" },
     );
   });
@@ -280,14 +280,14 @@ export function registerHandlers(
     const chatId = kindShort === "s" ? restoreSdkAgentId(rawChatId) : rawChatId;
     if (kindShort === "i") {
       await ctx.answerCallbackQuery({
-        text: "IDE-чаты удалять нельзя — Cursor использует их транскрипты.",
+        text: "IDE chats can't be deleted — Cursor uses their transcripts.",
         show_alert: true,
       });
       return;
     }
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      `🗑️ *Удалить SDK-чат?*\n\`${chatId}\`\n\n_Это действие нельзя отменить._`,
+      `🗑️ *Delete SDK chat?*\n\`${chatId}\`\n\n_This action cannot be undone._`,
       {
         parse_mode: "Markdown",
         reply_markup: deleteConfirmKeyboard(projectId, kindShort, chatId),
@@ -298,7 +298,7 @@ export function registerHandlers(
   bot.callbackQuery(/^dn:([^:]+):([si]):(.+)$/, async (ctx) => {
     const projectId = ctx.match[1];
     if (!projectId) return;
-    await ctx.answerCallbackQuery({ text: "Отменено" });
+    await ctx.answerCallbackQuery({ text: "Cancelled" });
     try {
       await ctx.deleteMessage();
     } catch {
@@ -316,14 +316,14 @@ export function registerHandlers(
     const chatId = kindShort === "s" ? restoreSdkAgentId(rawChatId) : rawChatId;
     if (kindShort === "i") {
       await ctx.answerCallbackQuery({
-        text: "IDE-чаты удалять нельзя.",
+        text: "IDE chats can't be deleted.",
         show_alert: true,
       });
       return;
     }
     const project = manager.getProject(projectId);
     if (!project) {
-      await ctx.answerCallbackQuery({ text: "Проект не найден", show_alert: true });
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
     }
     await ctx.answerCallbackQuery();
@@ -331,7 +331,7 @@ export function registerHandlers(
       await manager.deleteSdkAgent(project, chatId);
     } catch (err) {
       logger.error({ err, chatId }, "delete chat failed");
-      await ctx.reply("Не удалось удалить чат: " + manager.describeError(err));
+      await ctx.reply("Failed to delete chat: " + manager.describeError(err));
       return;
     }
 
@@ -355,7 +355,7 @@ export function registerHandlers(
     } catch {
       // ignore
     }
-    await ctx.reply(`✅ Чат удалён: \`${chatId}\``, { parse_mode: "Markdown" });
+    await ctx.reply(`✅ Chat deleted: \`${chatId}\``, { parse_mode: "Markdown" });
     await sendChatsList(ctx, manager, projectId, { manageMode: true });
   });
 
@@ -405,11 +405,11 @@ export function registerHandlers(
         return;
       }
       logger.error({ err }, "photo download failed");
-      await ctx.reply("Не удалось скачать фото: " + (err as Error).message);
+      await ctx.reply("Failed to download photo: " + (err as Error).message);
       return;
     }
     const caption = ctx.message.caption?.trim() ?? "";
-    const text = caption.length > 0 ? caption : "Что на этом изображении?";
+    const text = caption.length > 0 ? caption : "What's in this image?";
     await dispatchUserMessage(ctx, bot, config, manager, sessions, {
       text,
       images: [{ data: downloaded.buf.toString("base64"), mimeType: "image/jpeg" }],
@@ -432,7 +432,7 @@ export function registerHandlers(
         return;
       }
       logger.error({ err, fileName }, "document download failed");
-      await ctx.reply("Не удалось скачать файл: " + (err as Error).message);
+      await ctx.reply("Failed to download file: " + (err as Error).message);
       return;
     }
 
@@ -440,7 +440,7 @@ export function registerHandlers(
 
     // Image-document: send as image to the agent.
     if (isImageMime(mime)) {
-      const text = caption.length > 0 ? caption : "Что на этом изображении?";
+      const text = caption.length > 0 ? caption : "What's in this image?";
       await dispatchUserMessage(ctx, bot, config, manager, sessions, {
         text,
         images: [
@@ -475,7 +475,7 @@ export function registerHandlers(
 
     // Fallback: save to inbox, give agent the absolute path.
     if (!projectId) {
-      await ctx.reply("Сначала выберите проект: /projects");
+      await ctx.reply("Pick a project first: /projects");
       return;
     }
     let savedPath;
@@ -483,7 +483,7 @@ export function registerHandlers(
       savedPath = await saveToInbox(projectId, fileName, downloaded.buf);
     } catch (err) {
       logger.error({ err, fileName }, "saveToInbox failed");
-      await ctx.reply("Не удалось сохранить файл: " + (err as Error).message);
+      await ctx.reply("Failed to save file: " + (err as Error).message);
       return;
     }
     await dispatchUserMessage(ctx, bot, config, manager, sessions, {
@@ -503,7 +503,7 @@ export function registerHandlers(
       fileName: name,
       mimeType: a.mime_type,
       defaultPrompt:
-        "Прикреплён аудиофайл. Опиши, что в нём, если можешь — иначе попроси транскрипцию.",
+        "An audio file is attached. Describe what's in it if you can — otherwise ask for a transcript.",
     });
   });
 
@@ -515,7 +515,7 @@ export function registerHandlers(
       fileName: `voice-${v.file_id.slice(0, 8)}.ogg`,
       mimeType: v.mime_type ?? "audio/ogg",
       defaultPrompt:
-        "Прикреплено голосовое сообщение. Если есть инструмент транскрипции — расшифруй, иначе попроси пользователя прислать текст.",
+        "A voice message is attached. If you have a transcription tool — transcribe it, otherwise ask the user to send text.",
     });
   });
 
@@ -527,7 +527,7 @@ export function registerHandlers(
       fileName: v.file_name ?? `video-${v.file_id.slice(0, 8)}.mp4`,
       mimeType: v.mime_type ?? "video/mp4",
       defaultPrompt:
-        "Прикреплено видео. Опиши, что в нём, если есть инструмент для анализа видео.",
+        "A video is attached. Describe what's in it if you have a video-analysis tool.",
     });
   });
 
@@ -539,7 +539,7 @@ export function registerHandlers(
       fileName: `video-note-${v.file_id.slice(0, 8)}.mp4`,
       mimeType: "video/mp4",
       defaultPrompt:
-        "Прикреплён видео-кружок. Опиши, что в нём, если есть инструмент для анализа видео.",
+        "A round video message is attached. Describe what's in it if you have a video-analysis tool.",
     });
   });
 }
@@ -570,14 +570,14 @@ async function dispatchAttachedMedia(
       return;
     }
     logger.error({ err, fileName: opts.fileName }, "media download failed");
-    await ctx.reply("Не удалось скачать файл: " + (err as Error).message);
+    await ctx.reply("Failed to download file: " + (err as Error).message);
     return;
   }
   const projectId =
     sessions.get(ctx.from.id).selectedProjectId ??
     (config.projects.length === 1 ? config.projects[0]?.id : undefined);
   if (!projectId) {
-    await ctx.reply("Сначала выберите проект: /projects");
+    await ctx.reply("Pick a project first: /projects");
     return;
   }
   let savedPath;
@@ -585,7 +585,7 @@ async function dispatchAttachedMedia(
     savedPath = await saveToInbox(projectId, opts.fileName, downloaded.buf);
   } catch (err) {
     logger.error({ err, fileName: opts.fileName }, "saveToInbox failed");
-    await ctx.reply("Не удалось сохранить файл: " + (err as Error).message);
+    await ctx.reply("Failed to save file: " + (err as Error).message);
     return;
   }
   const caption = ctx.message?.caption?.trim() ?? "";
@@ -614,19 +614,19 @@ async function dispatchUserMessage(
       projectId = config.projects[0].id;
       sessions.patch(ctx.from.id, { selectedProjectId: projectId });
     } else {
-      await ctx.reply("Сначала выберите проект: /projects");
+      await ctx.reply("Pick a project first: /projects");
       return;
     }
   }
   const project = manager.getProject(projectId);
   if (!project) {
-    await ctx.reply("Проект не найден. /start");
+    await ctx.reply("Project not found. /start");
     return;
   }
 
   if (session.activeChatKind === "ide" && session.awaitingText?.kind !== "continue_ide") {
     await ctx.reply(
-      "👀 Это IDE-чат — он read-only. Нажмите *🔄 Продолжить в боте*, чтобы создать SDK-копию.",
+      "👀 This is an IDE chat — read-only. Tap *🔄 Continue in bot* to create an SDK copy.",
       { parse_mode: "Markdown" },
     );
     return;
@@ -640,7 +640,7 @@ async function dispatchUserMessage(
 
   if (!agentId && !explicitNewChat && !isContinueIde) {
     await ctx.reply(
-      `Откройте чат в проекте *${project.name}*: /chats — или нажмите «➕ Новый чат», чтобы начать новый.`,
+      `Open a chat in *${project.name}*: /chats — or tap "➕ New chat" to start a new one.`,
       { parse_mode: "Markdown" },
     );
     return;
@@ -659,12 +659,12 @@ async function dispatchUserMessage(
       transcript = await readTranscript(transcriptPath, { tail: 60 });
     } catch (err) {
       logger.error({ err, ideChatId }, "readTranscript failed");
-      await ctx.reply("Не удалось прочитать историю IDE-чата: " + (err as Error).message);
+      await ctx.reply("Failed to read IDE chat history: " + (err as Error).message);
       return;
     }
     outgoingText = buildBootstrapPrompt(transcript, text);
     await ctx.reply(
-      `🔄 Создаю SDK-агента с историей IDE-чата (${transcript.length} сообщ.)…`,
+      `🔄 Creating an SDK agent with IDE chat history (${transcript.length} msgs)…`,
     );
   }
 
@@ -679,12 +679,12 @@ async function dispatchUserMessage(
         awaitingText: undefined,
       });
       isNewChat = true;
-      await ctx.reply(`🆕 Новый чат: *${name}*\n\`${agentId}\``, {
+      await ctx.reply(`🆕 New chat: *${name}*\n\`${agentId}\``, {
         parse_mode: "Markdown",
       });
     } catch (err) {
       logger.error({ err }, "createAgent failed");
-      await ctx.reply("Не удалось создать агента: " + manager.describeError(err));
+      await ctx.reply("Failed to create agent: " + manager.describeError(err));
       return;
     }
   }
@@ -695,7 +695,7 @@ async function dispatchUserMessage(
   }
 
   if (manager.isAgentBusy(agentId)) {
-    await ctx.reply("⏳ Идёт активный run. Подождите завершения или /cancel.");
+    await ctx.reply("⏳ A run is already active. Wait for it to finish or /cancel.");
     return;
   }
 
@@ -705,7 +705,7 @@ async function dispatchUserMessage(
       agent = await manager.resumeAgent(project, agentId);
     } catch (err) {
       logger.error({ err, agentId }, "resume on send failed");
-      await ctx.reply("Не удалось подключиться к агенту: " + manager.describeError(err));
+      await ctx.reply("Failed to connect to agent: " + manager.describeError(err));
       return;
     }
   }
@@ -717,7 +717,7 @@ async function dispatchUserMessage(
     run = await manager.sendMessage(agent, sdkMessage);
   } catch (err) {
     logger.error({ err }, "agent.send failed");
-    await ctx.reply("Не удалось отправить сообщение агенту: " + manager.describeError(err));
+    await ctx.reply("Failed to send message to agent: " + manager.describeError(err));
     return;
   }
 
@@ -767,8 +767,8 @@ async function sendChatsList(
   const { edit = false, manageMode = false } = options;
   const project = manager.getProject(projectId);
   if (!project) {
-    if (edit) await ctx.editMessageText("Проект не найден.");
-    else await ctx.reply("Проект не найден.");
+    if (edit) await ctx.editMessageText("Project not found.");
+    else await ctx.reply("Project not found.");
     return;
   }
   const [sdkResult, ideResult] = await Promise.allSettled([
@@ -789,9 +789,9 @@ async function sendChatsList(
 
   const titleIcon = manageMode ? "🗑" : "💬";
   const subtitle = manageMode
-    ? "_Тапните 🗑 справа от чата, чтобы удалить._"
+    ? "_Tap the 🗑 next to a chat to delete it._"
     : `_💬 SDK: ${sdkAgents.length} · 👀 IDE: ${ideChats.length}_`;
-  const header = `${titleIcon} Чаты в *${project.name}* (${total})\n${subtitle}`;
+  const header = `${titleIcon} Chats in *${project.name}* (${total})\n${subtitle}`;
 
   const opts = {
     parse_mode: "Markdown" as const,
@@ -816,7 +816,7 @@ async function openIdeChat(
     transcript = await readTranscript(transcriptPath);
   } catch (err) {
     logger.error({ err, ideChatId }, "openIdeChat read failed");
-    await ctx.reply("Не удалось прочитать IDE-чат: " + (err as Error).message);
+    await ctx.reply("Failed to read IDE chat: " + (err as Error).message);
     return;
   }
   const lastText = getLastIdeAssistantText(transcript);
@@ -824,8 +824,8 @@ async function openIdeChat(
   const assistantMessageCount = transcript.filter((e) => e.role === "assistant").length;
 
   await ctx.reply(
-    `👀 *${project.name}* · IDE-чат \`${ideChatId}\`\n` +
-      `_${userMessageCount} user · ${assistantMessageCount} assistant сообщ. Read-only._`,
+    `👀 *${project.name}* · IDE chat \`${ideChatId}\`\n` +
+      `_${userMessageCount} user · ${assistantMessageCount} assistant msgs. Read-only._`,
     { parse_mode: "Markdown" },
   );
 
@@ -839,7 +839,7 @@ async function openIdeChat(
       });
     }
   } else {
-    await ctx.reply("В этом IDE-чате нет ответов ассистента.", {
+    await ctx.reply("This IDE chat has no assistant replies.", {
       reply_markup: ideChatKeyboard(project.id, ideChatId),
     });
   }
@@ -859,7 +859,7 @@ async function startNewChatPrompt(
     activeRunId: undefined,
   });
   await ctx.reply(
-    "✏️ Отправьте первое сообщение — будет создан новый агент в этом проекте.",
+    "✏️ Send your first message — a new agent will be created in this project.",
   );
 }
 
@@ -875,14 +875,14 @@ async function handleCancel(
   const session = sessions.get(ctx.from.id);
   const agentId = session.activeAgentId;
   if (!agentId) {
-    await ctx.reply("Активного чата нет.");
+    await ctx.reply("No active chat.");
     return;
   }
   try {
     const cancelled = await manager.cancelActiveRun(agentId);
-    await ctx.reply(cancelled ? "🛑 Run отменён." : "Активного run нет.");
+    await ctx.reply(cancelled ? "🛑 Run cancelled." : "No active run.");
   } catch (err) {
-    await ctx.reply("Не удалось отменить run: " + manager.describeError(err));
+    await ctx.reply("Failed to cancel run: " + manager.describeError(err));
   }
 }
 
@@ -899,13 +899,13 @@ async function handleStatus(
     : undefined;
   const kind = session.activeChatKind === "ide" ? "👀 IDE" : "💬 SDK";
   const lines = [
-    `Модель: \`${config.defaultModel.id}\``,
-    `Проект: ${project ? `*${project.name}*` : "не выбран"}`,
-    `Активный чат: ${session.activeAgentId ? `${kind} \`${session.activeAgentId}\`` : "нет"}`,
+    `Model: \`${config.defaultModel.id}\``,
+    `Project: ${project ? `*${project.name}*` : "not selected"}`,
+    `Active chat: ${session.activeAgentId ? `${kind} \`${session.activeAgentId}\`` : "none"}`,
   ];
   if (session.activeAgentId && session.activeChatKind === "sdk") {
     const run = manager.getActiveRun(session.activeAgentId);
-    lines.push(`Run: ${run ? run.status : "неактивен"}`);
+    lines.push(`Run: ${run ? run.status : "inactive"}`);
   }
   await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
 }
@@ -917,18 +917,18 @@ async function sendMcpList(ctx: Context, project: ProjectConfig | undefined): Pr
     entries = await loadMcpServers(cwd);
   } catch (err) {
     logger.error({ err }, "loadMcpServers failed");
-    await ctx.reply("Не удалось прочитать MCP-серверы.");
+    await ctx.reply("Failed to read MCP servers.");
     return;
   }
   if (entries.length === 0) {
     await ctx.reply(
       project
-        ? `MCP-серверов для проекта «${project.name}» не найдено.`
-        : "Глобальных MCP-серверов не найдено (~/.cursor/mcp.json).",
+        ? `No MCP servers found for "${project.name}".`
+        : "No global MCP servers found (~/.cursor/mcp.json).",
     );
     return;
   }
-  const header = project ? `🔌 MCP в *${project.name}*` : "🔌 Глобальные MCP";
+  const header = project ? `🔌 MCP in *${project.name}*` : "🔌 Global MCP";
   const lines = entries.map((entry) => {
     const tag = entry.source === "project" ? "[project]" : "[user]";
     return `${tag} *${entry.name}* — ${summarizeMcpEntry(entry)}`;
