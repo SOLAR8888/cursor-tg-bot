@@ -26,11 +26,23 @@ export interface TranscriptEntry {
 const IDE_CHAT_NAME_MAX = 60;
 const TRANSCRIPT_LINE_BUDGET = 1000;
 
+/**
+ * Translate a workspace cwd into the folder name Cursor IDE uses under
+ * `~/.cursor/projects/`. Mirrors Cursor's own normalization rules:
+ *
+ *   1. lowercase the Windows drive letter (`C:` → `c`);
+ *   2. replace any run of non-alphanumeric characters with a single dash —
+ *      this includes `\`, `/`, `_`, `:`, `.`, spaces, etc.;
+ *   3. trim leading/trailing dashes.
+ *
+ * The previous implementation only replaced `\` and `/`, so paths
+ * containing `_` (e.g. `RESPIN_GAMES`) ended up looking up a directory
+ * that doesn't exist and silently returned an empty IDE-chat list.
+ */
 export function normalizeProjectId(cwd: string): string {
   let s = cwd;
   s = s.replace(/^([A-Za-z]):/, (_match, drive: string) => drive.toLowerCase());
-  s = s.replace(/[\\/]/g, "-");
-  s = s.replace(/-+/g, "-");
+  s = s.replace(/[^A-Za-z0-9]+/g, "-");
   s = s.replace(/^-+|-+$/g, "");
   return s;
 }
@@ -234,29 +246,37 @@ export async function listIdeChats(cwd: string): Promise<IdeChatInfo[]> {
     if (header?.isArchived === true) continue;
 
     const transcriptPath = path.join(dir, entry.name, `${entry.name}.jsonl`);
+    let stats;
     try {
-      const stats = await stat(transcriptPath);
-
-      const headerName = header?.name?.trim();
-      const name =
-        headerName && headerName.length > 0
-          ? deriveIdeChatName(headerName)
-          : deriveIdeChatName((await readFirstUserText(transcriptPath)) ?? entry.name);
-
-      const lastModified =
-        header?.lastUpdatedAt && header.lastUpdatedAt > 0
-          ? header.lastUpdatedAt
-          : stats.mtimeMs;
-
-      out.push({
-        id: entry.name,
-        name,
-        lastModified,
-        transcriptPath,
-      });
+      stats = await stat(transcriptPath);
     } catch (err) {
-      logger.warn({ err, transcriptPath }, "failed to inspect ide chat");
+      const code = (err as NodeJS.ErrnoException).code;
+      // Empty folder or missing transcript file — nothing the bot can open,
+      // so skip silently. Only log unexpected failures (permission errors,
+      // I/O errors, etc.).
+      if (code !== "ENOENT") {
+        logger.warn({ err, transcriptPath }, "failed to inspect ide chat");
+      }
+      continue;
     }
+
+    const headerName = header?.name?.trim();
+    const name =
+      headerName && headerName.length > 0
+        ? deriveIdeChatName(headerName)
+        : deriveIdeChatName((await readFirstUserText(transcriptPath)) ?? entry.name);
+
+    const lastModified =
+      header?.lastUpdatedAt && header.lastUpdatedAt > 0
+        ? header.lastUpdatedAt
+        : stats.mtimeMs;
+
+    out.push({
+      id: entry.name,
+      name,
+      lastModified,
+      transcriptPath,
+    });
   }
   out.sort((a, b) => b.lastModified - a.lastModified);
   return out;
