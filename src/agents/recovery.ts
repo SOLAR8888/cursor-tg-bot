@@ -5,6 +5,7 @@ import type { SessionStore } from "../bot/session.js";
 import { logger } from "../logger.js";
 import { chunkText } from "../util/chunk.js";
 import { afterRunKeyboard } from "../bot/keyboards.js";
+import { isProjectVisibleToUser } from "../bot/auth.js";
 
 const RECOVERY_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -25,6 +26,14 @@ export async function recoverActiveRuns(
     }
     const project = manager.getProject(session.selectedProjectId);
     if (!project) continue;
+    if (!isProjectVisibleToUser(project, userId)) {
+      logger.info(
+        { userId, projectId: project.id },
+        "recovery: user no longer has access to project; clearing active run",
+      );
+      sessions.patch(userId, { activeRunId: undefined });
+      continue;
+    }
     tasks.push(
       recoverOneRun(
         bot,

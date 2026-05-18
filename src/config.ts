@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { config as dotenvConfig } from "dotenv";
 import { z } from "zod";
 import type { ModelSelection } from "@cursor/sdk";
+import { logger } from "./logger.js";
 import type { AppConfig, ProjectConfig } from "./types.js";
 
 dotenvConfig({ quiet: true, override: true });
@@ -16,6 +17,10 @@ const projectSchema = z.object({
   name: z.string().min(1),
   cwd: z.string().min(1),
   description: z.string().optional(),
+  allowedUserIds: z
+    .array(z.number().int().positive())
+    .nonempty("allowedUserIds must contain at least one user id when set")
+    .optional(),
 });
 
 const projectsFileSchema = z.object({
@@ -102,7 +107,12 @@ async function loadProjects(): Promise<readonly ProjectConfig[]> {
     }
     seen.add(p.id);
   }
-  return result.data.projects;
+  return result.data.projects.map<ProjectConfig>((p) => {
+    const { allowedUserIds, ...rest } = p;
+    return allowedUserIds
+      ? { ...rest, allowedUserIds: new Set(allowedUserIds) }
+      : rest;
+  });
 }
 
 export async function loadConfig(): Promise<AppConfig> {
@@ -118,6 +128,20 @@ export async function loadConfig(): Promise<AppConfig> {
 
   const allowedUserIds = parseAllowedUserIds(process.env.ALLOWED_USER_IDS);
   const projects = await loadProjects();
+
+  for (const project of projects) {
+    if (!project.allowedUserIds) continue;
+    const unknown: number[] = [];
+    for (const userId of project.allowedUserIds) {
+      if (!allowedUserIds.has(userId)) unknown.push(userId);
+    }
+    if (unknown.length > 0) {
+      logger.warn(
+        { projectId: project.id, unknownUserIds: unknown },
+        "project.allowedUserIds contains ids missing from global ALLOWED_USER_IDS; those users still won't be able to use the bot",
+      );
+    }
+  }
 
   const defaultModel: ModelSelection = {
     id: process.env.DEFAULT_MODEL_ID ?? "claude-opus-4-7",

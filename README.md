@@ -129,8 +129,36 @@ Copy `projects.json.example` to `projects.json` and edit it:
 | `name` | yes | Display name shown in the menu |
 | `cwd` | yes | **Absolute** path to the project root. On Windows escape `\\` |
 | `description` | no | Free-form text shown on the project page |
+| `allowedUserIds` | no | Array of Telegram user IDs allowed to see and use this project. Omit to make it visible to **all** users in the global `ALLOWED_USER_IDS`. Per-project IDs must also be in the global allowlist — the global whitelist middleware always runs first. |
 
 `projects.json` is **not committed** to git (it's in `.gitignore`) — it can contain local paths.
+
+#### Per-project access example
+
+```json
+{
+  "projects": [
+    {
+      "id": "team-app",
+      "name": "Team App",
+      "cwd": "/srv/team-app",
+      "description": "Visible to the whole team (no allowedUserIds → no restriction)"
+    },
+    {
+      "id": "private-app",
+      "name": "Private App",
+      "cwd": "/srv/private-app",
+      "description": "Visible only to two specific users",
+      "allowedUserIds": [123456789, 987654321]
+    }
+  ]
+}
+```
+
+With `ALLOWED_USER_IDS=123456789,987654321,555000111` in `.env`:
+- All three users can talk to the bot.
+- All three see `Team App` in `/projects`.
+- Only `123456789` and `987654321` see `Private App`; for user `555000111` the project does not exist (not even in deep-linked callbacks).
 
 ## Running the bot
 
@@ -314,10 +342,11 @@ This version uses the **minimum** sensible level of access control: a Telegram U
 ### What's already in place
 
 1. **Whitelist as the first middleware**. Any update from a user not in `ALLOWED_USER_IDS` is silently dropped (`return` without reply). The bot doesn't answer, doesn't acknowledge its existence, only writes a `warn` to the log. That's safer than "access denied" because it doesn't reveal there's a working bot at this token.
-2. **No webhooks** — long-polling, no inbound ports.
-3. **Logs are redacted**: `TELEGRAM_BOT_TOKEN`, `CURSOR_API_KEY`, `Authorization` headers are masked (see `src/logger.ts`).
-4. **`.env`, `projects.json`, `data/`** are in `.gitignore`. Tokens and paths don't leak into git.
-5. **Message contents** are not logged by default — only metadata (`user_id`, `project_id`, `agent_id`). Set `LOG_MESSAGES=true` for debug.
+2. **Per-project allowlists**. Each entry in `projects.json` may carry an `allowedUserIds` array. Projects with such an array are invisible to everyone else: they don't appear in `/projects`, and deep-linked callbacks (`project:`, `chats:`, `csdk:`, ...) respond with *Project not found* instead of leaking the project's existence.
+3. **No webhooks** — long-polling, no inbound ports.
+4. **Logs are redacted**: `TELEGRAM_BOT_TOKEN`, `CURSOR_API_KEY`, `Authorization` headers are masked (see `src/logger.ts`).
+5. **`.env`, `projects.json`, `data/`** are in `.gitignore`. Tokens and paths don't leak into git.
+6. **Message contents** are not logged by default — only metadata (`user_id`, `project_id`, `agent_id`). Set `LOG_MESSAGES=true` for debug.
 
 ### Recommended manual steps
 

@@ -11,6 +11,13 @@
       "name": "Another Project",
       "cwd": "/home/me/work/another-project",
       "description": "Linux/macOS path example"
+    },
+    {
+      "id": "shared-project",
+      "name": "Shared Project",
+      "cwd": "/home/me/work/shared",
+      "description": "Visible to a subset of users — comment out allowedUserIds to share with everyone.",
+      "allowedUserIds": [123456789, 987654321]
     }
   ]
 }

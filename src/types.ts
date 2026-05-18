@@ -5,6 +5,15 @@ export interface ProjectConfig {
   name: string;
   cwd: string;
   description?: string;
+  /**
+   * Optional per-project allowlist. If set, only these Telegram user IDs can
+   * see and interact with the project. If omitted, the project is visible to
+   * every user in the global `ALLOWED_USER_IDS` allowlist.
+   *
+   * Per-project users must also be in the global allowlist — the global
+   * whitelist middleware always runs first.
+   */
+  allowedUserIds?: ReadonlySet<number>;
 }
 
 export interface AppConfig {
