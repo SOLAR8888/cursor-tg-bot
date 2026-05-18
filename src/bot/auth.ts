@@ -1,5 +1,6 @@
 import type { Context, MiddlewareFn } from "grammy";
 import { logger } from "../logger.js";
+import type { ProjectConfig } from "../types.js";
 
 export function whitelistMiddleware(
   allowedUserIds: ReadonlySet<number>,
@@ -20,4 +21,23 @@ export function whitelistMiddleware(
     }
     await next();
   };
+}
+
+/**
+ * Returns true when the project has no per-project allowlist, or when the
+ * user is on it. The global whitelist is enforced separately by
+ * `whitelistMiddleware`.
+ */
+export function isProjectVisibleToUser(
+  project: ProjectConfig,
+  userId: number,
+): boolean {
+  return !project.allowedUserIds || project.allowedUserIds.has(userId);
+}
+
+export function visibleProjectsForUser(
+  projects: readonly ProjectConfig[],
+  userId: number,
+): readonly ProjectConfig[] {
+  return projects.filter((p) => isProjectVisibleToUser(p, userId));
 }

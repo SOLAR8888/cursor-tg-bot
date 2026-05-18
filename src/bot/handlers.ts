@@ -7,6 +7,7 @@ import type { SessionStore } from "./session.js";
 import { logger, logMessages } from "../logger.js";
 import { streamRun } from "../agents/streamer.js";
 import { chunkText } from "../util/chunk.js";
+import { isProjectVisibleToUser, visibleProjectsForUser } from "./auth.js";
 import {
   CB,
   activeChatKeyboard,
@@ -69,6 +70,26 @@ export function registerHandlers(
   manager: AgentManager,
   sessions: SessionStore,
 ): void {
+  /**
+   * Returns the project iff it exists AND the user is allowed to see it
+   * according to `project.allowedUserIds`. Centralises the visibility check
+   * so every handler that resolves a `projectId` from callback_data / session
+   * goes through the same gate.
+   */
+  function resolveProjectFor(
+    userId: number,
+    projectId: string,
+  ): ProjectConfig | undefined {
+    const project = manager.getProject(projectId);
+    if (!project) return undefined;
+    if (!isProjectVisibleToUser(project, userId)) return undefined;
+    return project;
+  }
+
+  function visibleProjects(userId: number): readonly ProjectConfig[] {
+    return visibleProjectsForUser(config.projects, userId);
+  }
+
   // ---------- COMMANDS ----------
   bot.command("start", async (ctx) => {
     if (ctx.from) sessions.reset(ctx.from.id);
@@ -80,8 +101,14 @@ export function registerHandlers(
   });
 
   bot.command("projects", async (ctx) => {
+    if (!ctx.from) return;
+    const projects = visibleProjects(ctx.from.id);
+    if (projects.length === 0) {
+      await ctx.reply("You don't have access to any projects. Contact the admin.");
+      return;
+    }
     await ctx.reply("Pick a project:", {
-      reply_markup: projectsKeyboard(config.projects),
+      reply_markup: projectsKeyboard(projects),
     });
   });
 
@@ -92,6 +119,10 @@ export function registerHandlers(
       await ctx.reply("Pick a project first: /projects");
       return;
     }
+    if (!resolveProjectFor(ctx.from.id, session.selectedProjectId)) {
+      await ctx.reply("Pick a project first: /projects");
+      return;
+    }
     await sendChatsList(ctx, manager, session.selectedProjectId);
   });
 
@@ -99,6 +130,10 @@ export function registerHandlers(
     if (!ctx.from) return;
     const session = sessions.get(ctx.from.id);
     if (!session.selectedProjectId) {
+      await ctx.reply("Pick a project first: /projects");
+      return;
+    }
+    if (!resolveProjectFor(ctx.from.id, session.selectedProjectId)) {
       await ctx.reply("Pick a project first: /projects");
       return;
     }
@@ -113,7 +148,7 @@ export function registerHandlers(
     if (!ctx.from) return;
     const session = sessions.get(ctx.from.id);
     if (session.selectedProjectId) {
-      const project = manager.getProject(session.selectedProjectId);
+      const project = resolveProjectFor(ctx.from.id, session.selectedProjectId);
       if (project) {
         await sendMcpList(ctx, project, { edit: false });
         return;
@@ -131,9 +166,19 @@ export function registerHandlers(
   });
 
   bot.callbackQuery(CB.PROJECTS, async (ctx) => {
+    if (!ctx.from) return;
     await ctx.answerCallbackQuery();
+    const projects = visibleProjects(ctx.from.id);
+    if (projects.length === 0) {
+      await safeEditMessageText(
+        ctx,
+        "You don't have access to any projects. Contact the admin.",
+        { reply_markup: rootKeyboard() },
+      );
+      return;
+    }
     await safeEditMessageText(ctx, "Pick a project:", {
-      reply_markup: projectsKeyboard(config.projects),
+      reply_markup: projectsKeyboard(projects),
     });
   });
 
@@ -146,7 +191,7 @@ export function registerHandlers(
     if (!ctx.from) return;
     const projectId = ctx.match[1];
     if (!projectId) return;
-    const project = manager.getProject(projectId);
+    const project = resolveProjectFor(ctx.from.id, projectId);
     if (!project) {
       await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
@@ -165,15 +210,25 @@ export function registerHandlers(
   });
 
   bot.callbackQuery(/^chats:(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
     const projectId = ctx.match[1];
     if (!projectId) return;
+    if (!resolveProjectFor(ctx.from.id, projectId)) {
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery();
     await sendChatsList(ctx, manager, projectId, { edit: true });
   });
 
   bot.callbackQuery(/^chats_m:(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
     const projectId = ctx.match[1];
     if (!projectId) return;
+    if (!resolveProjectFor(ctx.from.id, projectId)) {
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery();
     await sendChatsList(ctx, manager, projectId, { edit: true, manageMode: true });
   });
@@ -183,7 +238,7 @@ export function registerHandlers(
     const projectId = ctx.match[1];
     const agentId = ctx.match[2] ? restoreSdkAgentId(ctx.match[2]) : undefined;
     if (!projectId || !agentId) return;
-    const project = manager.getProject(projectId);
+    const project = resolveProjectFor(ctx.from.id, projectId);
     if (!project) {
       await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
@@ -240,7 +295,7 @@ export function registerHandlers(
     const projectId = ctx.match[1];
     const ideChatId = ctx.match[2];
     if (!projectId || !ideChatId) return;
-    const project = manager.getProject(projectId);
+    const project = resolveProjectFor(ctx.from.id, projectId);
     if (!project) {
       await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
@@ -262,6 +317,10 @@ export function registerHandlers(
     const projectId = ctx.match[1];
     const ideChatId = ctx.match[2];
     if (!projectId || !ideChatId) return;
+    if (!resolveProjectFor(ctx.from.id, projectId)) {
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery();
     sessions.patch(ctx.from.id, {
       selectedProjectId: projectId,
@@ -280,10 +339,15 @@ export function registerHandlers(
   });
 
   bot.callbackQuery(/^d:([^:]+):([si]):(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
     const projectId = ctx.match[1];
     const kindShort = ctx.match[2] as "s" | "i";
     const rawChatId = ctx.match[3];
     if (!projectId || !rawChatId) return;
+    if (!resolveProjectFor(ctx.from.id, projectId)) {
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
+      return;
+    }
     const chatId = kindShort === "s" ? restoreSdkAgentId(rawChatId) : rawChatId;
     if (kindShort === "i") {
       await ctx.answerCallbackQuery({
@@ -303,8 +367,13 @@ export function registerHandlers(
   });
 
   bot.callbackQuery(/^dn:([^:]+):([si]):(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
     const projectId = ctx.match[1];
     if (!projectId) return;
+    if (!resolveProjectFor(ctx.from.id, projectId)) {
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery({ text: "Cancelled" });
     try {
       await ctx.deleteMessage();
@@ -328,7 +397,7 @@ export function registerHandlers(
       });
       return;
     }
-    const project = manager.getProject(projectId);
+    const project = resolveProjectFor(ctx.from.id, projectId);
     if (!project) {
       await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
       return;
@@ -370,11 +439,16 @@ export function registerHandlers(
     if (!ctx.from) return;
     const projectId = ctx.match[1];
     if (!projectId) return;
+    if (!resolveProjectFor(ctx.from.id, projectId)) {
+      await ctx.answerCallbackQuery({ text: "Project not found", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery();
     await startNewChatPrompt(ctx, sessions, projectId);
   });
 
   bot.callbackQuery(/^mcp:(.+)$/, async (ctx) => {
+    if (!ctx.from) return;
     const projectId = ctx.match[1];
     if (!projectId) return;
     await ctx.answerCallbackQuery();
@@ -382,7 +456,7 @@ export function registerHandlers(
       await sendMcpList(ctx, undefined, { edit: true });
       return;
     }
-    const project = manager.getProject(projectId);
+    const project = resolveProjectFor(ctx.from.id, projectId);
     if (!project) return;
     await sendMcpList(ctx, project, { edit: true });
   });
@@ -457,8 +531,9 @@ export function registerHandlers(
       return;
     }
 
+    const userVisibleProjects = visibleProjects(ctx.from.id);
     const projectId = sessions.get(ctx.from.id).selectedProjectId
-      ?? (config.projects.length === 1 ? config.projects[0]?.id : undefined);
+      ?? (userVisibleProjects.length === 1 ? userVisibleProjects[0]?.id : undefined);
 
     // Text-like and small enough — embed in prompt.
     if (
@@ -580,9 +655,10 @@ async function dispatchAttachedMedia(
     await ctx.reply("Failed to download file: " + (err as Error).message);
     return;
   }
+  const userVisibleProjects = visibleProjectsForUser(config.projects, ctx.from.id);
   const projectId =
     sessions.get(ctx.from.id).selectedProjectId ??
-    (config.projects.length === 1 ? config.projects[0]?.id : undefined);
+    (userVisibleProjects.length === 1 ? userVisibleProjects[0]?.id : undefined);
   if (!projectId) {
     await ctx.reply("Pick a project first: /projects");
     return;
@@ -615,10 +691,11 @@ async function dispatchUserMessage(
   const images = incoming.images;
 
   const session = sessions.get(ctx.from.id);
+  const userVisibleProjects = visibleProjectsForUser(config.projects, ctx.from.id);
   let projectId = session.selectedProjectId;
   if (!projectId) {
-    if (config.projects.length === 1 && config.projects[0]) {
-      projectId = config.projects[0].id;
+    if (userVisibleProjects.length === 1 && userVisibleProjects[0]) {
+      projectId = userVisibleProjects[0].id;
       sessions.patch(ctx.from.id, { selectedProjectId: projectId });
     } else {
       await ctx.reply("Pick a project first: /projects");
@@ -626,7 +703,7 @@ async function dispatchUserMessage(
     }
   }
   const project = manager.getProject(projectId);
-  if (!project) {
+  if (!project || !isProjectVisibleToUser(project, ctx.from.id)) {
     await ctx.reply("Project not found. /start");
     return;
   }
@@ -773,7 +850,11 @@ async function sendChatsList(
 ): Promise<void> {
   const { edit = false, manageMode = false } = options;
   const project = manager.getProject(projectId);
-  if (!project) {
+  const userId = ctx.from?.id;
+  if (
+    !project ||
+    (userId !== undefined && !isProjectVisibleToUser(project, userId))
+  ) {
     if (edit) await safeEditMessageText(ctx, "Project not found.");
     else await ctx.reply("Project not found.");
     return;
@@ -949,9 +1030,13 @@ async function handleStatus(
 ): Promise<void> {
   if (!ctx.from) return;
   const session = sessions.get(ctx.from.id);
-  const project = session.selectedProjectId
+  const rawProject = session.selectedProjectId
     ? manager.getProject(session.selectedProjectId)
     : undefined;
+  const project =
+    rawProject && isProjectVisibleToUser(rawProject, ctx.from.id)
+      ? rawProject
+      : undefined;
   const kind = session.activeChatKind === "ide" ? "👀 IDE" : "💬 SDK";
   const lines = [
     `Model: \`${config.defaultModel.id}\``,
