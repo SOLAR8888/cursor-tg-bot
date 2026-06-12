@@ -144,7 +144,7 @@ export async function loadConfig(): Promise<AppConfig> {
   }
 
   const defaultModel: ModelSelection = {
-    id: process.env.DEFAULT_MODEL_ID ?? "claude-opus-4-7",
+    id: process.env.DEFAULT_MODEL_ID ?? "auto",
     params: parseModelParams(process.env.DEFAULT_MODEL_PARAMS),
   };
 
