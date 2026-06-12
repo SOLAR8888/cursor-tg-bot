@@ -93,8 +93,8 @@ cp .env.example .env
 | `TELEGRAM_BOT_TOKEN` | yes | Token from @BotFather |
 | `ALLOWED_USER_IDS` | yes | CSV of allowed Telegram user IDs, e.g. `123456789,987654321` |
 | `CURSOR_API_KEY` | yes | Cursor API key |
-| `DEFAULT_MODEL_ID` | no | Defaults to `claude-opus-4-7` (Opus 4.7) |
-| `DEFAULT_MODEL_PARAMS` | no | Defaults to `thinking=max` (Max Mode). Format: `key=value,key=value` |
+| `DEFAULT_MODEL_ID` | no | Defaults to `auto` (Cursor picks the model) |
+| `DEFAULT_MODEL_PARAMS` | no | Optional. Format: `key=value,key=value` |
 | `SHOW_THINKING` | no | `true` to stream "thinking" blocks to Telegram. Default `false` |
 | `STREAM_EDIT_DEBOUNCE_MS` | no | Debounce for editing streaming messages. Default `900` |
 | `LOG_LEVEL` | no | `debug` / `info` / `warn` / `error`. Default `info` |
